@@ -110,9 +110,7 @@ class DropService : Service() {
                 analyzer.sensitivity = 1f
                 analyzer.latencySec = 0.07f
                 effects.maxBrightness = 1f
-                effects.intensity = 0.35f
                 effects.dropFx = true
-                effects.paletteKey = "auto"
                 effects.useCover = true
                 effects.strobe = if (p.strobeOn) 1f else 0f
                 val tr = NowPlaying.track.value
@@ -132,6 +130,7 @@ class DropService : Service() {
                 s.send(effects.frame(analyzer.now(), snap))
                 tick++
                 if (tick % 25L == 0L) applyPrefs()
+                if (tick % 100L == 0L) Log.i(TAG, "show ${effects.mode} ${effects.figureLabel} excitation ${"%.2f".format(effects.excitement)}")
                 if (tick % 5L == 0L) {
                     beats++
                     live.value = LiveState(

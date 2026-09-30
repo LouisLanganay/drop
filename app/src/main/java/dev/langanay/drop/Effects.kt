@@ -35,35 +35,44 @@ object Palettes {
 }
 
 enum class Figure(val label: String) {
-    UNISON("Unisson"), DUO("Duo gauche-droite"), WAVE("Vague"), CHASE("Poursuite douce"),
+    UNISON("Unisson"), CHASE("Poursuite"), PINGPONG("Ping-pong gauche-droite"),
+    SWEEP("Balayage aller-retour"), CROSS("Couleurs croisées"), HITS("Noir et flash"),
 }
 
 /**
- * Le light show, façon boîte de nuit : une nappe de couleur toujours allumée qui respire avec le rythme,
- * plutôt qu'une suite de flashs.
- * - Un look (couleur principale et couleur d'accent qui s'accordent, pochette ou palette du style) tient
- *   16 mesures ; le suivant arrive en fondu de 3 secondes.
- * - Le rythme ne fait que moduler la luminosité, d'une amplitude fixée pour une soirée
- *   (sur chaque temps à haute énergie, sur le premier temps de la mesure sinon, pas du tout au calme).
- * - Les figures (unisson, duo gauche-droite, vague, poursuite douce) déplacent la lumière sans jamais
- *   descendre sous la nappe.
- * - Seul le drop peut flasher : stroboscope de 2,5 à 4 secondes s'il est activé, au plus une fois
- *   toutes les 10 secondes, puis explosion de couleur sur deux mesures.
+ * Le light show, 50 images par seconde. Son intensité suit la musique sur une échelle continue
+ * (« excitation », tirée de l'énergie et de la densité des attaques) :
+ * - une figure par phrase de 8 mesures : unisson (accent sur le premier temps), poursuite autour du canapé,
+ *   ping-pong gauche-droite, balayage aller-retour, couleurs croisées, et pour le rap et le rock noir et
+ *   flash sur chaque grosse caisse ;
+ * - les couleurs changent toutes les 4 mesures quand ça envoie, toutes les 8 sinon, et se répartissent
+ *   entre les lampes : elles ne font la même chose qu'en unisson ;
+ * - hors noir et flash, la lumière ne retombe jamais au noir entre deux temps : les temps se lisent comme
+ *   des pulsations sur une nappe, pas comme des flashs ;
+ * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé),
+ *   puis deux mesures où tout le groupe change de couleur à chaque temps.
+ * Les couleurs viennent de la pochette (complétées de teintes voisines si elle en a peu) ou du style.
  */
 class Effects(channels: List<Channel>) {
-    // Ordre des vagues et poursuites : autour du canapé, de gauche à droite en passant par devant.
+    // Ordre de la poursuite : autour du canapé, de gauche à droite en passant par devant.
     private val ring = channels.sortedByDescending { atan2(it.y, it.x) }
-    private val side = channels.associate { it.id to if (it.x < -0.3f) -1 else if (it.x > 0.3f) 1 else 0 }
-    private val shownBri = HashMap<Int, Float>()
+    // De gauche à droite : position de 0 à 1 pour le balayage, moitié gauche et moitié droite pour le ping-pong.
+    private val byX = channels.sortedBy { it.x }
+    private val across = byX.withIndex().associate { (i, c) -> c.id to if (byX.size > 1) i / (byX.size - 1f) else 0.5f }
+    private val side = byX.withIndex().associate { (i, c) ->
+        c.id to when {
+            byX.size % 2 == 1 && i == byX.size / 2 -> 0
+            i < byX.size / 2 -> -1
+            else -> 1
+        }
+    }
+    private val shown = HashMap<Int, FloatArray>()
     private val events = ConcurrentLinkedQueue<AudioEvent>()
     private val rnd = Random(System.nanoTime())
 
     @Volatile var maxBrightness = 1f
-    @Volatile var strobe = 0.3f
-    /** 0 = ambiance (presque aucune variation), 1 = fête. */
-    @Volatile var intensity = 0.3f
+    @Volatile var strobe = 1f
     @Volatile var dropFx = true
-    @Volatile var paletteKey = "auto"
     @Volatile var useCover = true
     @Volatile var cover: List<FloatArray> = emptyList()
     @Volatile var genreMood: Mood? = null
@@ -72,24 +81,34 @@ class Effects(channels: List<Channel>) {
         private set
     @Volatile var figureLabel = ""
         private set
+    @Volatile var excitement = 0f
+        private set
 
     private var lastTime = 0.0
     private var beats = 0L
     private var beatAt = -10.0
+    private var kickAt = -10.0
     private var dropAt = -100.0
     private var strobeUntil = -1.0
-    private var lastAccent = -100.0
-    private var lastChange = -100.0
+    private var lastStrobe = -100.0
     private var level = 0f
     private var energy = 0f
-    private var tier = 0
-    private var figure = Figure.UNISON
+    private var excite = 0f
+    private var calm = true
+    private var barsSinceLook = 0
+    private var barsSinceFigure = 0
+    private var figure = Figure.CROSS
+    private var fast = false
+    private var chaseDir = 1
     private var look = 0
-    private var fromPrimary = floatArrayOf(1f, 0.4f, 0.2f)
-    private var fromAccent = floatArrayOf(0.4f, 0.2f, 1f)
-    private var curPrimary = fromPrimary
-    private var curAccent = fromAccent
+    private var fromP = floatArrayOf(1f, 0.4f, 0.2f)
+    private var fromA = floatArrayOf(0.4f, 0.2f, 1f)
+    private var fromT = floatArrayOf(1f, 0.2f, 0.6f)
+    private var curP = fromP
+    private var curA = fromA
+    private var curT = fromT
     private var lookAt = -10.0
+    private var fade = 1.0
 
     fun post(e: AudioEvent) { events.add(e) }
 
@@ -97,168 +116,212 @@ class Effects(channels: List<Channel>) {
         val dt = (if (lastTime == 0.0) 0.02 else now - lastTime).toFloat().coerceIn(0f, 0.1f)
         lastTime = now
         val period = s.period.coerceIn(0.28f, 1.2f).toDouble()
-        val st = strobe.coerceIn(0f, 1f)
-        val punch = intensity.coerceIn(0f, 1f)
-        // Volume lissé sur une demi-seconde : le micro saute d'un mot à l'autre, la lumière ne doit pas.
-        level += (s.level - level) * min(1f, dt / 0.6f)
-        energy += (s.level - energy) * min(1f, dt / 4f)
+        level += (s.level - level) * min(1f, dt / 0.4f)
+        energy += (s.level - energy) * min(1f, dt / 3f)
+        // Excitation : 0 pour une ballade, 1 pour un morceau qui tape fort et dense.
+        val target = if (s.silent) 0f else
+            ((energy - 0.18f) / 0.45f).coerceIn(0f, 1f) * (0.55f + 0.45f * (s.onsetRate / 5f).coerceIn(0f, 1f))
+        excite += (target - excite) * min(1f, dt / 2f)
+        val x = excite
+        excitement = x
+        if (calm) { if (x > 0.28f) calm = false } else if (x < 0.2f) calm = true
 
-        var newPhrase = false
+        val mood = genreMood?.let { if (it == Mood.HOUSE && s.bpm >= 128f) Mood.TECHNO else it } ?: s.mood
         while (true) {
             when (val e = events.poll() ?: break) {
                 is AudioEvent.Beat -> {
                     beats++
                     beatAt = now
-                    if (beats % 64L == 0L) newPhrase = true
+                    if (now - dropAt in 0.0..(period * 8)) {
+                        // Juste après le drop : tout le groupe change de couleur à chaque temps.
+                        changeLook(now, 0.06)
+                    } else if (beats % 4L == 0L) {
+                        barsSinceLook++
+                        barsSinceFigure++
+                        if (barsSinceFigure >= 8) pickFigure(mood, x)
+                        if (barsSinceLook >= (if (x > 0.5f) 4 else 8)) changeLook(now, if (x > 0.5f) 0.3 else 1.5)
+                    }
                 }
-                AudioEvent.Kick, AudioEvent.Impact -> {}
+                AudioEvent.Kick -> if (now - kickAt > 0.22) kickAt = now
+                AudioEvent.Impact -> {}
                 AudioEvent.Drop -> if (dropFx) {
                     dropAt = now
-                    if (st > 0f && now - lastAccent > 10.0) {
-                        // Stroboscope de 2,5 à 4 secondes selon l'énergie du morceau, puis l'explosion de couleur.
+                    if (strobe > 0f && now - lastStrobe > 10.0) {
                         strobeUntil = now + 2.5 + 1.5 * energy.coerceIn(0f, 1f)
-                        lastAccent = now
+                        lastStrobe = now
                         dropAt = strobeUntil
                     }
-                    newPhrase = true
+                    pickFigure(mood, 1f)
                 }
             }
         }
 
-        val mood = genreMood?.let { if (it == Mood.HOUSE && s.bpm >= 128f) Mood.TECHNO else it } ?: s.mood
-        // Paliers d'énergie avec une marge, pour ne pas basculer sans arrêt entre deux.
-        val newTier = when {
-            s.silent -> 0
-            energy < (if (tier <= 1) 0.3f else 0.24f) -> 1
-            energy > (if (tier == 3) 0.48f else 0.56f) && s.onsetRate > 2.5f -> 3
-            else -> 2
-        }
-        if ((newTier != tier && now - lastChange > 8.0) || (newPhrase && now - lastChange > 8.0)) {
-            tier = newTier
-            lastChange = now
-            pickFigure(mood)
-            fromPrimary = curPrimary
-            fromAccent = curAccent
-            look = (look + 1) % 12
-            lookAt = now
-        }
-
-        val theme = if (useCover && cover.size >= 2) cover else
-            (if (paletteKey == "auto") Palettes.forMood(mood) else Palettes.all[paletteKey] ?: Palettes.all.getValue("club")).colors
-        val k = ((now - lookAt) / 3.0).toFloat().coerceIn(0f, 1f)
-        val primary = mix(fromPrimary, theme[look % theme.size], smooth(k))
-        val accent = mix(fromAccent, theme[(look + 1) % theme.size], smooth(k))
-        curPrimary = primary
-        curAccent = accent
+        // Trois couleurs par look, en fondu depuis celles affichées au moment du changement.
+        val theme = themeFor(mood)
+        val k = smooth(((now - lookAt) / fade).toFloat().coerceIn(0f, 1f))
+        val p = mix(fromP, theme[look % theme.size], k)
+        val a = mix(fromA, theme[(look + 1) % theme.size], k)
+        val t = mix(fromT, theme[(look + 2) % theme.size], k)
+        curP = p
+        curA = a
+        curT = t
+        val trio = listOf(p, a, t)
 
         val sinceBeat = now - beatAt
         val phase = (sinceBeat / period).coerceIn(0.0, 4.0)
         val downbeat = beats % 4L == 0L
-        // Respiration : montée franche mais pas instantanée, retombée douce sur la moitié du temps.
-        val breath = exp(-sinceBeat / (period * 0.5)).toFloat()
+        val env = exp(-sinceBeat / (period * lerp(0.5f, 0.35f, x))).toFloat()
+        // Nappe et crête : les lampes au repos gardent la nappe, celles qui jouent montent à la crête.
+        val lo = lerp(0.32f, 0.2f, x)
+        val hi = lerp(0.8f, 1f, x)
         val sinceDrop = now - dropAt
         val strobeOn = floor(now * 10.0).toLong() % 2L == 0L
 
         mode = when {
             now < strobeUntil -> "Stroboscope"
-            tier == 0 -> "Silence"
+            s.silent -> "Silence"
             sinceDrop in 0.0..(period * 8) -> "DROP"
             s.buildup > 0.3f -> "Montée"
-            tier == 1 -> "Calme"
-            tier == 2 -> "Groove"
-            else -> "Énergie"
+            calm -> "Calme"
+            x > 0.6f -> "Énergie"
+            else -> "Groove"
         }
-        figureLabel = if (mode == "Groove" || mode == "Énergie") figure.label else ""
-
-        // Nappe : ce qui reste allumé en permanence, selon l'énergie.
-        val base = when (tier) {
-            0 -> 0.05f
-            1 -> 0.3f + 0.25f * level
-            2 -> 0.45f + 0.2f * level
-            else -> 0.55f + 0.2f * level
-        }
-        val depth = punch * when (tier) { 3 -> 0.4f; 2 -> 0.25f; else -> 0f }
-        val beatBump = when (tier) {
-            3 -> breath
-            2 -> if (downbeat) breath else 0f
-            else -> 0f
+        figureLabel = when (mode) {
+            "Groove", "Énergie" -> figure.label
+            "DROP" -> "Explosion"
+            "Montée" -> "Accélération"
+            else -> ""
         }
 
-        val out = HashMap<Int, FloatArray>()
         val n = ring.size
+        val out = HashMap<Int, FloatArray>()
         for ((i, ch) in ring.withIndex()) {
-            var color: FloatArray
-            var bri: Float
+            val sd = side[ch.id] ?: 0
             var instant = false
-            when (mode) {
-                "Stroboscope" -> { color = WHITE; bri = if (strobeOn) 1f else 0.05f; instant = true }
-                "Silence" -> { color = primary; bri = 0.05f }
-                "DROP" -> {
-                    // Tout le groupe monte dans la couleur principale, l'accent passe en fondu.
-                    val w = (sinceDrop / (period * 8)).toFloat().coerceIn(0f, 1f)
-                    color = mix(accent, primary, w)
-                    bri = 0.95f - 0.25f * w + depth * 0.5f * breath
-                }
+            var up = 0.035f
+            var down = 0.2f
+            val target: FloatArray = when (mode) {
+                "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
+                "Silence" -> scale(p, 0.05f)
+                "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
                 "Montée" -> {
-                    // La nappe monte et blanchit doucement, sans clignoter.
-                    color = mix(primary, WHITE, 0.5f * s.buildup)
-                    bri = base + 0.3f * s.buildup
+                    // Poursuite qui accélère (1, 2 puis 4 lampes par temps) et blanchit.
+                    val speed = if (s.buildup < 0.5f) 1 else if (s.buildup < 0.75f) 2 else 4
+                    val step = ((beats * speed + floor(min(phase, 0.999) * speed).toLong()) % n).toInt()
+                    if (step == i) scale(mix(p, WHITE, 0.6f * s.buildup), 1f)
+                    else scale(mix(a, WHITE, 0.3f * s.buildup), 0.18f + 0.2f * s.buildup)
                 }
                 "Calme" -> {
-                    val w = ((cos(now * 0.25 + i) + 1) / 2).toFloat()
-                    color = mix(primary, accent, 0.35f * w)
-                    bri = base
+                    // Chaque lampe dans sa couleur, qui glisse lentement vers celle de sa voisine ; respiration au premier temps.
+                    down = 0.4f
+                    val w = ((cos(now * 0.25 + i * PI / 2) + 1) / 2).toFloat()
+                    scale(mix(trio[i % 3], trio[(i + 1) % 3], w), 0.42f + 0.12f * level + (if (downbeat) 0.15f * env else 0f))
                 }
                 else -> when (figure) {
-                    Figure.UNISON -> { color = primary; bri = base + depth * beatBump }
-                    Figure.DUO -> {
-                        // Deux couleurs, gauche et droite, qui s'échangent lentement toutes les 8 mesures.
-                        val sd = side[ch.id] ?: 0
-                        val swap = ((cos((beats + phase) / 32.0 * PI) + 1) / 2).toFloat()
-                        val left = mix(primary, accent, swap)
-                        val right = mix(accent, primary, swap)
-                        color = when { sd < 0 -> left; sd > 0 -> right; else -> mix(left, right, 0.5f) }
-                        bri = base + depth * beatBump
-                    }
-                    Figure.WAVE -> {
-                        // Une vague de lumière fait le tour de la pièce en une mesure.
-                        val bar = ((beats % 4L) + min(phase, 1.0)) / 4.0
-                        val w = ((cos(2 * PI * (bar - i.toDouble() / n)) + 1) / 2).toFloat()
-                        color = mix(primary, accent, 0.25f * w)
-                        bri = base + depth * 0.8f * w
+                    Figure.UNISON -> {
+                        // Toutes ensemble, accent sur le premier temps.
+                        scale(if (downbeat && phase < 0.5) a else p, lo + (hi - lo) * env * (if (downbeat) 1f else 0.7f))
                     }
                     Figure.CHASE -> {
-                        // Une lampe un peu plus forte à chaque temps ; les autres gardent la nappe.
-                        val lit = (beats % n).toInt() == i
-                        color = if (lit) mix(primary, accent, 0.3f) else primary
-                        bri = base + (if (lit) depth * breath else 0f)
+                        // Une lampe à la fois autour du canapé, d'un cran par temps (à la croche quand ça envoie).
+                        val speed = if (fast) 2 else 1
+                        val raw = ((beats * speed + floor(min(phase, 0.999) * speed).toLong()) % n).toInt()
+                        val step = if (chaseDir > 0) raw else n - 1 - raw
+                        if (step == i) scale(p, hi) else scale(trio[1 + i % 2], lo)
+                    }
+                    Figure.PINGPONG -> {
+                        // Gauche sur un temps, droite sur le suivant ; le centre marque le premier temps.
+                        val leftTurn = beats % 2L == 1L
+                        val mine = when (sd) { -1 -> leftTurn; 1 -> !leftTurn; else -> downbeat }
+                        val col = when (sd) { -1 -> p; 1 -> a; else -> t }
+                        scale(col, if (mine) lo + (hi - lo) * env else lo * 0.8f)
+                    }
+                    Figure.SWEEP -> {
+                        // Un faisceau qui traverse la pièce de gauche à droite puis revient : une mesure par passage,
+                        // une demi-mesure quand ça envoie.
+                        val perPass = if (fast) 2 else 4
+                        val pos = ((beats % perPass) + min(phase, 1.0)) / perPass
+                        val head = if ((beats / perPass) % 2L == 0L) pos else 1 - pos
+                        val d = (across[ch.id] ?: 0.5f) - head
+                        val g = exp(-(d * d) / 0.08).toFloat()
+                        scale(mix(a, p, g), lo + (hi - lo) * g)
+                    }
+                    Figure.CROSS -> {
+                        // Une lampe sur deux dans chaque couleur, échangées à chaque mesure (tous les deux temps
+                        // quand ça envoie) ; pulsation marquée au premier temps, légère sur les autres.
+                        val swap = (beats / (if (fast) 2L else 4L)) % 2L == 1L
+                        scale(if ((i % 2 == 0) != swap) p else a, lo + ((if (downbeat) hi else 0.6f) - lo) * env)
+                    }
+                    Figure.HITS -> {
+                        // Presque noir, et tout le groupe claque sur chaque grosse caisse, couleurs croisées.
+                        val col = if ((i % 2 == 0) != ((beats / 4) % 2L == 1L)) p else a
+                        val sinceKick = now - kickAt
+                        if (sinceKick > 2.0) scale(col, lo + (0.7f - lo) * env) // pas de grosse caisse : pulsation sur les temps
+                        else {
+                            instant = sinceKick < 0.03
+                            down = 0.07f
+                            scale(col, 0.07f + 0.93f * exp(-sinceKick / 0.16).toFloat())
+                        }
                     }
                 }
             }
-            // Lissage : montée en 80 ms, descente en 300 ms (le stroboscope, lui, reste net).
-            val prev = shownBri[ch.id] ?: bri
-            val tau = if (bri > prev) 0.08f else 0.3f
-            val b = if (instant) bri else prev + (bri - prev) * min(1f, dt / tau)
-            shownBri[ch.id] = b
-            out[ch.id] = scale(color, (b * maxBrightness).coerceIn(0f, 1f))
+            // Lissage par composante : montée rapide, descente plus douce ; le stroboscope reste net.
+            val prev = shown[ch.id] ?: target
+            val v = if (instant) target else FloatArray(3) { c ->
+                prev[c] + (target[c] - prev[c]) * min(1f, dt / (if (target[c] > prev[c]) up else down))
+            }
+            shown[ch.id] = v
+            out[ch.id] = FloatArray(3) { c -> (v[c] * maxBrightness).coerceIn(0f, 1f) }
         }
         return out
     }
 
-    private fun pickFigure(m: Mood) {
-        val set = when (tier) {
-            0, 1 -> listOf(Figure.UNISON)
-            2 -> listOf(Figure.UNISON, Figure.DUO)
-            else -> when (m) {
-                Mood.TECHNO, Mood.HOUSE -> listOf(Figure.UNISON, Figure.WAVE, Figure.CHASE, Figure.DUO)
-                else -> listOf(Figure.UNISON, Figure.DUO, Figure.WAVE)
-            }
+    private fun changeLook(now: Double, seconds: Double) {
+        fromP = curP
+        fromA = curA
+        fromT = curT
+        look = (look + 1) % 12
+        lookAt = now
+        fade = seconds
+        barsSinceLook = 0
+    }
+
+    /** Figure de la phrase suivante, tirée au sort selon le style, jamais deux fois la même d'affilée. */
+    private fun pickFigure(m: Mood, x: Float) {
+        barsSinceFigure = 0
+        val pool = when (m) {
+            Mood.TRAP, Mood.ROCK -> listOf(Figure.HITS to 2, Figure.PINGPONG to 2, Figure.CROSS to 2, Figure.CHASE to 1, Figure.UNISON to 1)
+            Mood.TECHNO, Mood.HOUSE -> listOf(Figure.CHASE to 2, Figure.SWEEP to 2, Figure.PINGPONG to 2, Figure.CROSS to 1, Figure.UNISON to 1)
+            Mood.GROOVE -> listOf(Figure.CROSS to 2, Figure.PINGPONG to 2, Figure.SWEEP to 2, Figure.CHASE to 1, Figure.UNISON to 1)
+            Mood.CHILL -> listOf(Figure.SWEEP to 2, Figure.CROSS to 2, Figure.UNISON to 1)
+        }.filter { it.first != figure }
+        var r = rnd.nextInt(pool.sumOf { it.second })
+        figure = pool.first { r -= it.second; r < 0 }.first
+        fast = x > 0.6f
+        chaseDir = if (rnd.nextBoolean()) 1 else -1
+    }
+
+    /** Couleurs du morceau : la pochette complétée de teintes voisines (harmonie analogue), sinon la palette du style. */
+    private var themeKey: List<FloatArray>? = null
+    private var themeCache: List<FloatArray> = emptyList()
+    private fun themeFor(m: Mood): List<FloatArray> {
+        if (!(useCover && cover.size >= 2)) return Palettes.forMood(m).colors
+        if (themeKey === cover) return themeCache
+        val out = ArrayList(cover)
+        val hsv = FloatArray(3)
+        android.graphics.Color.RGBToHSV((cover[0][0] * 255).toInt(), (cover[0][1] * 255).toInt(), (cover[0][2] * 255).toInt(), hsv)
+        var shift = 25f
+        while (out.size < 4) {
+            out += NowPlaying.hsv(hsv[0] + shift, max(0.75f, hsv[1]), 1f)
+            shift = if (shift > 0) -shift else -shift + 20f
         }
-        val choices = set.filter { it != figure }.ifEmpty { set }
-        figure = choices[rnd.nextInt(choices.size)]
+        themeKey = cover
+        themeCache = out
+        return out
     }
 
     private fun smooth(t: Float) = t * t * (3 - 2 * t)
+    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t.coerceIn(0f, 1f)
 
     companion object {
         val WHITE = floatArrayOf(1f, 1f, 1f)
