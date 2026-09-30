@@ -14,13 +14,17 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 enum class Mood(val label: String) {
-    CHILL("Chill"), GROOVE("Groove"), HOUSE("House"), TECHNO("Techno"), TRAP("Rap / trap")
+    CHILL("Chill"), GROOVE("Groove"), HOUSE("House"), TECHNO("Techno"), TRAP("Rap / trap"), ROCK("Rock")
 }
 
 sealed class AudioEvent {
     /** Un temps, émis en avance de la latence réglée pour que la lumière tombe dessus. */
     data class Beat(val index: Long, val period: Float) : AudioEvent()
     data object Drop : AudioEvent()
+    /** Coup de grosse caisse détecté dans les basses (sert au mode « noir et flash »). */
+    data object Kick : AudioEvent()
+    /** Brusque montée d'énergie : accent de stroboscope. */
+    data object Impact : AudioEvent()
 }
 
 /** Ce que les effets lisent à chaque image, écrit par le fil audio. */
@@ -75,6 +79,14 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private var recentPos = 0
     private var o1 = 0f
     private var o2 = 0f
+    private val recentBass = FloatArray(48)
+    private var b1 = 0f
+    private var b2 = 0f
+    private var lastKick = -1.0
+    private var lastImpact = -100.0
+    private var eFast = 0f
+    private val eHist = FloatArray(24)
+    private var eHistPos = 0
     private var lastOnset = -1.0
     private val onsetTimes = ArrayDeque<Double>()
     private var onsetRateLong = 0f
@@ -175,6 +187,30 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         }
         o2 = o1
         o1 = o
+
+        // Grosse caisse : pic du flux dans les basses, au-dessus de sa moyenne récente.
+        val bf = if (silent) 0f else bassFlux
+        recentBass[recentPos % recentBass.size] = bf
+        var bm = 0f
+        for (v in recentBass) bm += v
+        bm /= recentBass.size
+        if (b1 > b2 && b1 >= bf && b1 > bm * 1.8f + 0.3f && onsetTime - lastKick > 0.12) {
+            lastKick = onsetTime
+            emit(AudioEvent.Kick)
+        }
+        b2 = b1
+        b1 = bf
+
+        // Impact : l'énergie des 50 dernières ms dépasse nettement celle des 250 ms d'avant.
+        eFast += (level - eFast) * (dt / 0.05f)
+        val past = eHist[eHistPos]
+        eHist[eHistPos] = eFast
+        eHistPos = (eHistPos + 1) % eHist.size
+        if (!silent && eFast > 0.75f && eFast - past > 0.4f && t - lastImpact > 1.5) {
+            lastImpact = t
+            Log.i(TAG, "impact à ${"%.1f".format(t)} s")
+            emit(AudioEvent.Impact)
+        }
         while (onsetTimes.isNotEmpty() && t - onsetTimes.first() > 2.0) onsetTimes.removeFirst()
         val onsetRate = onsetTimes.size / 2f
         onsetRateLong += (onsetRate - onsetRateLong) * (dt / 8f)
@@ -190,16 +226,17 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         hShort += (highN - hShort) * (dt / 0.5f)
         hLong += (highN - hLong) * (dt / 8f)
 
-        val bassDown = bShort < bLong * 0.6f
-        val building = !silent && ((hShort > hLong * 1.15f && bassDown) ||
-            (bassDown && onsetRate > onsetRateLong * 1.3f && eShort > 0.3f))
-        buildup = if (building) min(1f, buildup + dt / 5f) else max(0f, buildup - dt / 1.2f)
+        val bassDown = bShort < bLong * 0.7f
+        val building = !silent && ((hShort > hLong * 1.1f && bassDown) ||
+            (bassDown && onsetRate > onsetRateLong * 1.2f && eShort > 0.25f) ||
+            (hShort > hLong * 1.3f && onsetRate > onsetRateLong * 1.2f))
+        buildup = if (building) min(1f, buildup + dt / 4f) else max(0f, buildup - dt / 1.5f)
         buildupPeak = max(buildup, buildupPeak - dt / 4f)
 
-        if (bShort < bLong * 0.5f) { if (lowBassSince < 0) lowBassSince = t }
+        if (bShort < bLong * 0.55f) { if (lowBassSince < 0) lowBassSince = t }
         val lowBassFor = if (lowBassSince >= 0) t - lowBassSince else 0.0
-        val bassBack = bassN > 0.7f && bShort > max(0.5f, bLong * 1.3f)
-        if (bassBack && t - lastDrop > 8.0 && eShort > 0.45f && (buildupPeak > 0.35f || lowBassFor > 1.5)) {
+        val bassBack = bassN > 0.6f && bShort > max(0.45f, bLong * 1.2f)
+        if (bassBack && t - lastDrop > 6.0 && eShort > 0.4f && (buildupPeak > 0.25f || lowBassFor > 1.0)) {
             Log.i(TAG, "DROP à ${"%.1f".format(t)} s (montée ${"%.2f".format(buildupPeak)}, basses absentes ${"%.1f".format(lowBassFor)} s)")
             lastDrop = t
             buildup = 0f

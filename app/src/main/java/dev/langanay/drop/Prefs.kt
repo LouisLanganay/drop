@@ -51,5 +51,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("dropfx", true)
         set(v) = sp.edit().putBoolean("dropfx", v).apply()
 
+    /** Couleurs tirées de la jaquette du morceau en cours plutôt que de la palette. */
+    var useCover: Boolean
+        get() = sp.getBoolean("cover", true)
+        set(v) = sp.edit().putBoolean("cover", v).apply()
+
     val paired: Boolean get() = !username.isNullOrBlank() && !clientKey.isNullOrBlank()
 }

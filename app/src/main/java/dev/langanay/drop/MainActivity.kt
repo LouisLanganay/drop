@@ -1,12 +1,15 @@
 package dev.langanay.drop
 
 import android.Manifest
+import android.content.Intent
+import android.provider.Settings
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,10 +52,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -157,7 +163,8 @@ class MainActivity : ComponentActivity() {
                         Text(if (state.running) "%.0f BPM".format(state.bpm) else "--", color = Craie, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                         Box(Modifier.size(14.dp).clip(CircleShape).background(beatColor))
                     }
-                    Text(listOf(state.mode, state.mood).filter { it.isNotEmpty() }.joinToString(" · "), color = if (state.mode == "DROP") Abricot else Craie, fontSize = 15.sp)
+                    Text(listOf(state.mode, state.figure).filter { it.isNotEmpty() }.joinToString(" · "), color = if (state.mode == "DROP" || state.mode == "Stroboscope") Abricot else Craie, fontSize = 15.sp)
+                    if (state.mood.isNotEmpty()) Text(state.mood, color = Brume, fontSize = 13.sp)
                     if (state.drops > 0) Text("${state.drops} drop${if (state.drops > 1) "s" else ""}", color = Brume, fontSize = 13.sp)
                 }
             }
@@ -166,6 +173,8 @@ class MainActivity : ComponentActivity() {
             }
             state.error?.let { Text(it, color = Grenat, fontSize = 14.sp) }
         }
+
+        NowPlayingCard(prefs)
 
         Card {
             Text("Zone", color = Craie, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -214,6 +223,56 @@ class MainActivity : ComponentActivity() {
             scope.launch { onUnpair() }
         }) { Text("Oublier ce pont", color = Brume) }
         Spacer(Modifier.height(24.dp))
+    }
+
+    @Composable
+    private fun NowPlayingCard(prefs: Prefs) {
+        val ctx = this@MainActivity
+        var enabled by remember { mutableStateOf(NowPlaying.enabled(ctx)) }
+        val track by NowPlaying.track.collectAsState()
+        var useCover by remember { mutableStateOf(prefs.useCover) }
+        LaunchedEffect(Unit) {
+            // Au retour des réglages, l'accès vient d'être donné : on le voit ici sans relancer l'app.
+            while (true) {
+                val now = NowPlaying.enabled(ctx)
+                if (now) NowPlaying.start(ctx)
+                enabled = now
+                delay(if (now) 5000 else 1000)
+            }
+        }
+        Card {
+            Text("Morceau en cours", color = Craie, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            val t = track
+            when {
+                !enabled -> {
+                    Text("Autorise Drop à lire les notifications : il y trouve le morceau que joue Spotify, sa jaquette pour les couleurs et son style.", color = Brume, fontSize = 13.sp)
+                    Button(
+                        onClick = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Abricot, contentColor = Nuit),
+                        shape = RoundedCornerShape(9.dp),
+                    ) { Text("Autoriser") }
+                }
+                t == null -> Text("Lance un morceau sur Spotify.", color = Brume, fontSize = 14.sp)
+                else -> {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        t.art?.let { Image(it.asImageBitmap(), contentDescription = null, modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp))) }
+                        Column(Modifier.weight(1f)) {
+                            Text(t.title, color = Craie, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(t.artist, color = Brume, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(t.genre ?: "style en cours de recherche", color = Brume, fontSize = 12.sp)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (t.colors.isEmpty()) Text("Pochette sans couleur : palette du style.", color = Brume, fontSize = 12.sp)
+                        t.colors.forEach { c -> Box(Modifier.size(18.dp).clip(CircleShape).background(Color(c[0], c[1], c[2]))) }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Couleurs de la pochette", color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(useCover, { useCover = it; prefs.useCover = it })
+                    }
+                }
+            }
+        }
     }
 
     @Composable

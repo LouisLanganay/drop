@@ -26,6 +26,16 @@
         </activity>
 
         <service
+            android:name=".NowPlayingListener"
+            android:exported="false"
+            android:label="Drop : morceau en cours"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".DropService"
             android:exported="false"
             android:foregroundServiceType="microphone" />

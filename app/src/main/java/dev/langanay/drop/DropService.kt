@@ -22,6 +22,7 @@ data class LiveState(
     val bpm: Float = 0f,
     val level: Float = 0f,
     val mode: String = "",
+    val figure: String = "",
     val mood: String = "",
     val beat: Long = 0,
     val drops: Int = 0,
@@ -57,6 +58,7 @@ class DropService : Service() {
         if (running) return START_NOT_STICKY
         startForeground(1, notification("Démarrage…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         running = true
+        NowPlaying.start(this)
         wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "drop:run").apply { acquire(6 * 60 * 60 * 1000L) }
         @Suppress("DEPRECATION")
         wifi = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "drop").apply { acquire() }
@@ -109,6 +111,10 @@ class DropService : Service() {
                 effects.strobe = p.strobe
                 effects.dropFx = p.dropFx
                 effects.paletteKey = p.palette
+                effects.useCover = p.useCover
+                val tr = NowPlaying.track.value
+                effects.cover = tr?.colors ?: emptyList()
+                effects.genreMood = tr?.mood
             }
             applyPrefs()
             audio = AudioEngine { analyzer.process(it) }.also { it.start(this) }
@@ -127,7 +133,8 @@ class DropService : Service() {
                     beats++
                     live.value = LiveState(
                         running = true, status = "Synchro en cours", area = area.name, bpm = snap.bpm,
-                        level = snap.level, mode = effects.mode, mood = snap.mood.label, beat = beats, drops = drops,
+                        level = snap.level, mode = effects.mode, figure = effects.figureLabel,
+                        mood = (NowPlaying.track.value?.genre ?: snap.mood.label), beat = beats, drops = drops,
                     )
                 }
                 val spent = (System.nanoTime() - t0) / 1_000_000
