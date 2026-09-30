@@ -50,9 +50,8 @@ enum class Figure(val label: String) {
  * - ping-pong, poursuite et balayage jouent avec le noir (un côté éteint, deux lampes allumées au plus,
  *   un faisceau qui traverse la pièce), mais jamais toutes les lampes éteintes en même temps ; les autres
  *   figures pulsent sur une nappe ;
- * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé) en deux
- *   groupes qui flashent en alternance de plus en plus vite, puis deux mesures où tout le groupe change de
- *   couleur à chaque temps.
+ * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé), toutes
+ *   les lampes ensemble, puis deux mesures où tout le groupe change de couleur à chaque temps.
  * Les couleurs viennent de la pochette (complétées de teintes voisines si elle en a peu) ou du style.
  */
 class Effects(channels: List<Channel>) {
@@ -93,8 +92,6 @@ class Effects(channels: List<Channel>) {
     private var dropAt = -100.0
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
-    private var strobeAt = -1.0
-    private var strobePhase = 0.0
     @Volatile private var testRequested = false
     private var level = 0f
     private var energy = 0f
@@ -179,12 +176,7 @@ class Effects(channels: List<Channel>) {
         val lo = lerp(0.32f, 0.2f, x)
         val hi = lerp(0.8f, 1f, x)
         val sinceDrop = now - dropAt
-        // Stroboscope en deux groupes alternés (une lampe sur deux autour du canapé), de 130 à 80 ms par flash.
-        if (now < strobeUntil) {
-            val progress = ((now - strobeAt) / (strobeUntil - strobeAt)).toFloat().coerceIn(0f, 1f)
-            strobePhase += dt / lerp(0.13f, 0.08f, progress)
-        }
-        val groupA = floor(strobePhase).toLong() % 2L == 0L
+        val strobeOn = floor(now * 10.0).toLong() % 2L == 0L
 
         mode = when {
             now < strobeUntil -> "Stroboscope"
@@ -210,7 +202,7 @@ class Effects(channels: List<Channel>) {
             var up = 0.035f
             var down = 0.2f
             val target: FloatArray = when (mode) {
-                "Stroboscope" -> { instant = true; if ((i % 2 == 0) == groupA) WHITE else BLACK }
+                "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
                 "Silence" -> scale(p, 0.05f)
                 "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
                 "Montée" -> {
@@ -290,9 +282,7 @@ class Effects(channels: List<Channel>) {
     private fun drop(now: Double, mood: Mood, test: Boolean) {
         dropAt = now
         if (test || (strobe > 0f && now - lastStrobe > 10.0)) {
-            strobeAt = now
             strobeUntil = now + if (test) 3.0 else 2.5 + 1.5 * energy.coerceIn(0f, 1f)
-            strobePhase = 0.0
             lastStrobe = now
             dropAt = strobeUntil
         }
