@@ -33,9 +33,9 @@ class Prefs(ctx: Context) {
         get() = sp.getFloat("maxbri", 1f)
         set(v) = sp.edit().putFloat("maxbri", v).apply()
 
-    /** 0 = stroboscope coupé, 1 = au maximum autorisé. */
+    /** 0 = stroboscope coupé, 1 = au maximum autorisé. Ne sert que sur les drops. */
     var strobe: Float
-        get() = sp.getFloat("strobe", 0.6f)
+        get() = sp.getFloat("strobe", 0.3f)
         set(v) = sp.edit().putFloat("strobe", v).apply()
 
     /** Avance donnée aux effets pour compenser le retard des ampoules, en ms. */
@@ -51,10 +51,20 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("dropfx", true)
         set(v) = sp.edit().putBoolean("dropfx", v).apply()
 
+    /** 0 = ambiance (la lumière bouge à peine), 1 = fête (respiration marquée sur les temps). */
+    var intensity: Float
+        get() = sp.getFloat("intensity", 0.3f)
+        set(v) = sp.edit().putFloat("intensity", v).apply()
+
     /** Couleurs tirées de la jaquette du morceau en cours plutôt que de la palette. */
     var useCover: Boolean
         get() = sp.getBoolean("cover", true)
         set(v) = sp.edit().putBoolean("cover", v).apply()
+
+    /** Le seul réglage : stroboscope sur les drops, oui ou non (sécurité). */
+    var strobeOn: Boolean
+        get() = sp.getBoolean("strobeon", true)
+        set(v) = sp.edit().putBoolean("strobeon", v).apply()
 
     val paired: Boolean get() = !username.isNullOrBlank() && !clientKey.isNullOrBlank()
 }

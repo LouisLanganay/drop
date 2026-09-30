@@ -34,8 +34,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -190,31 +188,12 @@ class MainActivity : ComponentActivity() {
         }
 
         Card {
-            Text("Palette", color = Craie, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            var pal by remember { mutableStateOf(prefs.palette) }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("Auto (selon le style)", pal == "auto") { pal = "auto"; prefs.palette = "auto" }
-                Palettes.all.forEach { (k, v) -> Chip(v.name, pal == k) { pal = k; prefs.palette = k } }
-            }
-        }
-
-        Card {
-            var sens by remember { mutableStateOf(prefs.sensitivity) }
-            var bri by remember { mutableStateOf(prefs.maxBrightness) }
-            var strobe by remember { mutableStateOf(prefs.strobe) }
-            var lat by remember { mutableStateOf(prefs.latencyMs.toFloat()) }
-            var dropFx by remember { mutableStateOf(prefs.dropFx) }
-            Setting("Sensibilité", "%.1f".format(sens)) { Slider(sens, { sens = it; prefs.sensitivity = it }, valueRange = 0.3f..2f, colors = sliderColors()) }
-            Setting("Luminosité max", "${(bri * 100).toInt()} %") { Slider(bri, { bri = it; prefs.maxBrightness = it }, valueRange = 0.2f..1f, colors = sliderColors()) }
-            Setting("Stroboscope", if (strobe < 0.05f) "coupé" else "${(strobe * 100).toInt()} %") {
-                Slider(strobe, { strobe = if (it < 0.05f) 0f else it; prefs.strobe = strobe }, valueRange = 0f..1f, colors = sliderColors())
-            }
-            Text("Stroboscope limité à 10 flashs par seconde. Déconseillé aux personnes photosensibles.", color = Brume, fontSize = 12.sp)
-            Setting("Avance sur le rythme", "${lat.toInt()} ms") { Slider(lat, { lat = it; prefs.latencyMs = it.toInt() }, valueRange = 0f..250f, colors = sliderColors()) }
+            var strobeOn by remember { mutableStateOf(prefs.strobeOn) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Effet sur les drops", color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                Switch(dropFx, { dropFx = it; prefs.dropFx = it })
+                Text("Stroboscope sur les drops", color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                Switch(strobeOn, { strobeOn = it; prefs.strobeOn = it })
             }
+            Text("2,5 à 4 secondes de flashs rapides au moment du drop. Déconseillé aux personnes photosensibles.", color = Brume, fontSize = 12.sp)
         }
 
         TextButton(onClick = {
@@ -230,7 +209,6 @@ class MainActivity : ComponentActivity() {
         val ctx = this@MainActivity
         var enabled by remember { mutableStateOf(NowPlaying.enabled(ctx)) }
         val track by NowPlaying.track.collectAsState()
-        var useCover by remember { mutableStateOf(prefs.useCover) }
         LaunchedEffect(Unit) {
             // Au retour des réglages, l'accès vient d'être donné : on le voit ici sans relancer l'app.
             while (true) {
@@ -266,10 +244,6 @@ class MainActivity : ComponentActivity() {
                         if (t.colors.isEmpty()) Text("Pochette sans couleur : palette du style.", color = Brume, fontSize = 12.sp)
                         t.colors.forEach { c -> Box(Modifier.size(18.dp).clip(CircleShape).background(Color(c[0], c[1], c[2]))) }
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Couleurs de la pochette", color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                        Switch(useCover, { useCover = it; prefs.useCover = it })
-                    }
                 }
             }
         }
@@ -295,17 +269,4 @@ class MainActivity : ComponentActivity() {
         ) { Text(label, color = if (selected) Nuit else Craie, fontSize = 14.sp) }
     }
 
-    @Composable
-    private fun Setting(label: String, value: String, slider: @Composable () -> Unit) {
-        Column {
-            Row {
-                Text(label, color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                Text(value, color = Brume, fontSize = 14.sp)
-            }
-            slider()
-        }
-    }
-
-    @Composable
-    private fun sliderColors() = SliderDefaults.colors(thumbColor = Abricot, activeTrackColor = Abricot, inactiveTrackColor = Nuit)
 }

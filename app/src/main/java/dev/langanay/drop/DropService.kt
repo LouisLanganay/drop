@@ -105,13 +105,16 @@ class DropService : Service() {
                 if (ev == AudioEvent.Drop) drops++
             }
             fun applyPrefs() {
-                analyzer.sensitivity = p.sensitivity
-                analyzer.latencySec = p.latencyMs / 1000f
-                effects.maxBrightness = p.maxBrightness
-                effects.strobe = p.strobe
-                effects.dropFx = p.dropFx
-                effects.paletteKey = p.palette
-                effects.useCover = p.useCover
+                // Réglages fixes, choisis pour que tout soit juste sans rien toucher ; le volume de la
+                // pièce est suivi automatiquement par l'analyse.
+                analyzer.sensitivity = 1f
+                analyzer.latencySec = 0.07f
+                effects.maxBrightness = 1f
+                effects.intensity = 0.35f
+                effects.dropFx = true
+                effects.paletteKey = "auto"
+                effects.useCover = true
+                effects.strobe = if (p.strobeOn) 1f else 0f
                 val tr = NowPlaying.track.value
                 effects.cover = tr?.colors ?: emptyList()
                 effects.genreMood = tr?.mood
