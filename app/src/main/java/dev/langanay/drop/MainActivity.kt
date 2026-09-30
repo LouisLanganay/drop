@@ -193,7 +193,12 @@ class MainActivity : ComponentActivity() {
                 Text("Stroboscope sur les drops", color = Craie, fontSize = 15.sp, modifier = Modifier.weight(1f))
                 Switch(strobeOn, { strobeOn = it; prefs.strobeOn = it })
             }
-            Text("2,5 à 4 secondes de flashs rapides au moment du drop. Déconseillé aux personnes photosensibles.", color = Brume, fontSize = 12.sp)
+            Text("2,5 à 4 secondes au moment du drop : deux groupes de lampes flashent en alternance, de plus en plus vite. Déconseillé aux personnes photosensibles.", color = Brume, fontSize = 12.sp)
+            Button(
+                onClick = { DropService.testStrobe() },
+                enabled = state.running,
+                colors = ButtonDefaults.buttonColors(containerColor = Abricot, contentColor = Nuit),
+            ) { Text(if (state.running) "Tester le stroboscope" else "Lance la synchro pour tester le stroboscope") }
         }
 
         TextButton(onClick = {

@@ -37,6 +37,10 @@ class DropService : Service() {
 
     companion object {
         val live = MutableStateFlow(LiveState())
+        @Volatile private var strobeTest = false
+
+        /** Bouton « Tester le stroboscope » : la boucle lance la séquence du drop à l'image suivante. */
+        fun testStrobe() { strobeTest = true }
         private const val STOP = "dev.langanay.drop.STOP"
 
         fun start(ctx: Context) = ctx.startForegroundService(Intent(ctx, DropService::class.java))
@@ -129,6 +133,10 @@ class DropService : Service() {
                 val snap = analyzer.snapshot
                 s.send(effects.frame(analyzer.now(), snap))
                 tick++
+                if (strobeTest) {
+                    strobeTest = false
+                    effects.testDrop()
+                }
                 if (tick % 25L == 0L) applyPrefs()
                 if (tick % 100L == 0L) Log.i(TAG, "show ${effects.mode} ${effects.figureLabel} excitation ${"%.2f".format(effects.excitement)}")
                 if (tick % 5L == 0L) {

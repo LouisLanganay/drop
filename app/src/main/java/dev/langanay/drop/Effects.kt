@@ -47,10 +47,12 @@ enum class Figure(val label: String) {
  *   flash sur chaque grosse caisse ;
  * - les couleurs changent toutes les 4 mesures quand ça envoie, toutes les 8 sinon, et se répartissent
  *   entre les lampes : elles ne font la même chose qu'en unisson ;
- * - hors noir et flash, la lumière ne retombe jamais au noir entre deux temps : les temps se lisent comme
- *   des pulsations sur une nappe, pas comme des flashs ;
- * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé),
- *   puis deux mesures où tout le groupe change de couleur à chaque temps.
+ * - ping-pong, poursuite et balayage jouent avec le noir (un côté éteint, deux lampes allumées au plus,
+ *   un faisceau qui traverse la pièce), mais jamais toutes les lampes éteintes en même temps ; les autres
+ *   figures pulsent sur une nappe ;
+ * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé) en deux
+ *   groupes qui flashent en alternance de plus en plus vite, puis deux mesures où tout le groupe change de
+ *   couleur à chaque temps.
  * Les couleurs viennent de la pochette (complétées de teintes voisines si elle en a peu) ou du style.
  */
 class Effects(channels: List<Channel>) {
@@ -91,6 +93,9 @@ class Effects(channels: List<Channel>) {
     private var dropAt = -100.0
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
+    private var strobeAt = -1.0
+    private var strobePhase = 0.0
+    @Volatile private var testRequested = false
     private var level = 0f
     private var energy = 0f
     private var excite = 0f
@@ -112,6 +117,9 @@ class Effects(channels: List<Channel>) {
 
     fun post(e: AudioEvent) { events.add(e) }
 
+    /** Bouton de test : lance tout de suite la séquence du drop, stroboscope compris. */
+    fun testDrop() { testRequested = true }
+
     fun frame(now: Double, s: Snapshot): Map<Int, FloatArray> {
         val dt = (if (lastTime == 0.0) 0.02 else now - lastTime).toFloat().coerceIn(0f, 0.1f)
         lastTime = now
@@ -127,6 +135,10 @@ class Effects(channels: List<Channel>) {
         if (calm) { if (x > 0.28f) calm = false } else if (x < 0.2f) calm = true
 
         val mood = genreMood?.let { if (it == Mood.HOUSE && s.bpm >= 128f) Mood.TECHNO else it } ?: s.mood
+        if (testRequested) {
+            testRequested = false
+            drop(now, mood, test = true)
+        }
         while (true) {
             when (val e = events.poll() ?: break) {
                 is AudioEvent.Beat -> {
@@ -144,15 +156,7 @@ class Effects(channels: List<Channel>) {
                 }
                 AudioEvent.Kick -> if (now - kickAt > 0.22) kickAt = now
                 AudioEvent.Impact -> {}
-                AudioEvent.Drop -> if (dropFx) {
-                    dropAt = now
-                    if (strobe > 0f && now - lastStrobe > 10.0) {
-                        strobeUntil = now + 2.5 + 1.5 * energy.coerceIn(0f, 1f)
-                        lastStrobe = now
-                        dropAt = strobeUntil
-                    }
-                    pickFigure(mood, 1f)
-                }
+                AudioEvent.Drop -> if (dropFx) drop(now, mood, test = false)
             }
         }
 
@@ -175,7 +179,12 @@ class Effects(channels: List<Channel>) {
         val lo = lerp(0.32f, 0.2f, x)
         val hi = lerp(0.8f, 1f, x)
         val sinceDrop = now - dropAt
-        val strobeOn = floor(now * 10.0).toLong() % 2L == 0L
+        // Stroboscope en deux groupes alternés (une lampe sur deux autour du canapé), de 130 à 80 ms par flash.
+        if (now < strobeUntil) {
+            val progress = ((now - strobeAt) / (strobeUntil - strobeAt)).toFloat().coerceIn(0f, 1f)
+            strobePhase += dt / lerp(0.13f, 0.08f, progress)
+        }
+        val groupA = floor(strobePhase).toLong() % 2L == 0L
 
         mode = when {
             now < strobeUntil -> "Stroboscope"
@@ -201,15 +210,14 @@ class Effects(channels: List<Channel>) {
             var up = 0.035f
             var down = 0.2f
             val target: FloatArray = when (mode) {
-                "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
+                "Stroboscope" -> { instant = true; if ((i % 2 == 0) == groupA) WHITE else BLACK }
                 "Silence" -> scale(p, 0.05f)
                 "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
                 "Montée" -> {
-                    // Poursuite qui accélère (1, 2 puis 4 lampes par temps) et blanchit.
+                    // Poursuite qui accélère (1, 2 puis 4 lampes par temps) et blanchit, deux lampes allumées au plus.
+                    down = 0.06f
                     val speed = if (s.buildup < 0.5f) 1 else if (s.buildup < 0.75f) 2 else 4
-                    val step = ((beats * speed + floor(min(phase, 0.999) * speed).toLong()) % n).toInt()
-                    if (step == i) scale(mix(p, WHITE, 0.6f * s.buildup), 1f)
-                    else scale(mix(a, WHITE, 0.3f * s.buildup), 0.18f + 0.2f * s.buildup)
+                    chase(i, n, speed, phase, scale(mix(p, WHITE, 0.6f * s.buildup), 1f), scale(mix(a, WHITE, 0.4f * s.buildup), 0.35f))
                 }
                 "Calme" -> {
                     // Chaque lampe dans sa couleur, qui glisse lentement vers celle de sa voisine ; respiration au premier temps.
@@ -223,18 +231,18 @@ class Effects(channels: List<Channel>) {
                         scale(if (downbeat && phase < 0.5) a else p, lo + (hi - lo) * env * (if (downbeat) 1f else 0.7f))
                     }
                     Figure.CHASE -> {
-                        // Une lampe à la fois autour du canapé, d'un cran par temps (à la croche quand ça envoie).
-                        val speed = if (fast) 2 else 1
-                        val raw = ((beats * speed + floor(min(phase, 0.999) * speed).toLong()) % n).toInt()
-                        val step = if (chaseDir > 0) raw else n - 1 - raw
-                        if (step == i) scale(p, hi) else scale(trio[1 + i % 2], lo)
+                        // Une lampe à la fois autour du canapé, d'un cran par temps (à la croche quand ça envoie),
+                        // suivie d'une traîne : deux lampes allumées au plus, les autres éteintes.
+                        down = 0.06f
+                        chase(i, n, if (fast) 2 else 1, phase, scale(p, hi), scale(a, 0.35f * hi))
                     }
                     Figure.PINGPONG -> {
-                        // Gauche sur un temps, droite sur le suivant ; le centre marque le premier temps.
+                        // Gauche sur un temps, droite sur le suivant : le côté qui ne joue pas est noir, celui qui
+                        // joue ne descend pas sous 40 %, donc jamais tout éteint. Le centre marque le premier temps.
                         val leftTurn = beats % 2L == 1L
                         val mine = when (sd) { -1 -> leftTurn; 1 -> !leftTurn; else -> downbeat }
-                        val col = when (sd) { -1 -> p; 1 -> a; else -> t }
-                        scale(col, if (mine) lo + (hi - lo) * env else lo * 0.8f)
+                        down = 0.08f
+                        if (mine) scale(when (sd) { -1 -> p; 1 -> a; else -> t }, max(0.4f, lo + (hi - lo) * env)) else BLACK
                     }
                     Figure.SWEEP -> {
                         // Un faisceau qui traverse la pièce de gauche à droite puis revient : une mesure par passage,
@@ -242,9 +250,11 @@ class Effects(channels: List<Channel>) {
                         val perPass = if (fast) 2 else 4
                         val pos = ((beats % perPass) + min(phase, 1.0)) / perPass
                         val head = if ((beats / perPass) % 2L == 0L) pos else 1 - pos
+                        // Faisceau dans le noir : la lampe la plus proche du faisceau reste au-dessus de 60 %.
                         val d = (across[ch.id] ?: 0.5f) - head
-                        val g = exp(-(d * d) / 0.08).toFloat()
-                        scale(mix(a, p, g), lo + (hi - lo) * g)
+                        val g = exp(-(d * d) / 0.06).toFloat()
+                        down = 0.1f
+                        scale(mix(a, p, g), hi * g)
                     }
                     Figure.CROSS -> {
                         // Une lampe sur deux dans chaque couleur, échangées à chaque mesure (tous les deux temps
@@ -274,6 +284,29 @@ class Effects(channels: List<Channel>) {
             out[ch.id] = FloatArray(3) { c -> (v[c] * maxBrightness).coerceIn(0f, 1f) }
         }
         return out
+    }
+
+    /** Drop : stroboscope (au plus un toutes les 10 s, sauf en test), puis explosion du groupe. */
+    private fun drop(now: Double, mood: Mood, test: Boolean) {
+        dropAt = now
+        if (test || (strobe > 0f && now - lastStrobe > 10.0)) {
+            strobeAt = now
+            strobeUntil = now + if (test) 3.0 else 2.5 + 1.5 * energy.coerceIn(0f, 1f)
+            strobePhase = 0.0
+            lastStrobe = now
+            dropAt = strobeUntil
+        }
+        pickFigure(mood, 1f)
+    }
+
+    /** Poursuite : la lampe de tête, la précédente en traîne, les autres noires. */
+    private fun chase(i: Int, n: Int, speed: Int, phase: Double, head: FloatArray, trail: FloatArray): FloatArray {
+        val step = beats * speed + floor(min(phase, 0.999) * speed).toLong()
+        return when ((if (chaseDir > 0) i else n - 1 - i).toLong()) {
+            step % n -> head
+            (step - 1 + n) % n -> trail
+            else -> BLACK
+        }
     }
 
     private fun changeLook(now: Double, seconds: Double) {
@@ -325,6 +358,7 @@ class Effects(channels: List<Channel>) {
 
     companion object {
         val WHITE = floatArrayOf(1f, 1f, 1f)
+        val BLACK = floatArrayOf(0f, 0f, 0f)
         fun mix(a: FloatArray, b: FloatArray, t: Float) = FloatArray(3) { a[it] + (b[it] - a[it]) * t.coerceIn(0f, 1f) }
         fun scale(a: FloatArray, k: Float) = FloatArray(3) { (a[it] * max(0f, k)).coerceIn(0f, 1f) }
     }
