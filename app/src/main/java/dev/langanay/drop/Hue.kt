@@ -97,6 +97,49 @@ class HueBridge(private val ip: String) {
         }
     }
 
+    /** La pièce qui contient la zone, et ses lampes hors de la zone (les lampes blanches du salon). */
+    class RoomInfo(val roomId: String, val others: List<String>)
+
+    private fun list(path: String, username: String): List<JSONObject> {
+        val data = JSONObject(call("GET", "/clip/v2/resource/$path", key = username).body).getJSONArray("data")
+        return (0 until data.length()).map { data.getJSONObject(it) }
+    }
+
+    private fun rids(a: JSONArray?): List<String> = if (a == null) emptyList() else (0 until a.length()).map { a.getJSONObject(it).getString("rid") }
+
+    fun roomInfo(username: String, areaId: String): RoomInfo? {
+        val cfg = list("entertainment_configuration/$areaId", username).firstOrNull() ?: return null
+        val chs = cfg.optJSONArray("channels") ?: JSONArray()
+        val services = (0 until chs.length()).flatMap { i ->
+            val mem = chs.getJSONObject(i).optJSONArray("members") ?: JSONArray()
+            (0 until mem.length()).map { mem.getJSONObject(it).getJSONObject("service").getString("rid") }
+        }.toSet()
+        val zoneDevices = list("entertainment", username).filter { it.getString("id") in services }
+            .map { it.getJSONObject("owner").getString("rid") }.toSet()
+        val room = list("room", username).firstOrNull { r -> rids(r.optJSONArray("children")).any { it in zoneDevices } } ?: return null
+        val roomDevices = rids(room.optJSONArray("children")).toSet()
+        val others = list("light", username).filter {
+            val owner = it.getJSONObject("owner").getString("rid")
+            owner in roomDevices && owner !in zoneDevices
+        }.map { it.getString("id") }
+        return RoomInfo(room.getString("id"), others)
+    }
+
+    fun fadeOff(username: String, lights: List<String>, ms: Int) {
+        val body = JSONObject().put("on", JSONObject().put("on", false)).put("dynamics", JSONObject().put("duration", ms)).toString()
+        lights.forEach { call("PUT", "/clip/v2/resource/light/$it", body, username) }
+    }
+
+    /** Active la scène de ce nom dans la pièce, en fondu. Rend false si elle n'existe pas. */
+    fun recallScene(username: String, roomId: String, name: String, ms: Int): Boolean {
+        val scene = list("scene", username).firstOrNull {
+            it.getJSONObject("metadata").getString("name") == name && it.getJSONObject("group").getString("rid") == roomId
+        } ?: return false
+        call("PUT", "/clip/v2/resource/scene/${scene.getString("id")}",
+            JSONObject().put("recall", JSONObject().put("action", "active").put("duration", ms)).toString(), username)
+        return true
+    }
+
     fun setStreaming(username: String, areaId: String, start: Boolean) {
         val r = call("PUT", "/clip/v2/resource/entertainment_configuration/$areaId",
             JSONObject().put("action", if (start) "start" else "stop").toString(), username)

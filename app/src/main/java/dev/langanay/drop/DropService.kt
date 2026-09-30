@@ -70,6 +70,7 @@ class DropService : Service() {
         var stream: HueStream? = null
         var audio: AudioEngine? = null
         var areaId: String? = null
+        var room: HueBridge.RoomInfo? = null
         val user = p.username
         val key = p.clientKey
         try {
@@ -79,6 +80,9 @@ class DropService : Service() {
             val area = areas.firstOrNull { it.id == p.configId } ?: areas.firstOrNull { it.name == "Salon" } ?: areas.firstOrNull()
                 ?: throw HueException("Aucune zone de synchro sur le pont.")
             areaId = area.id
+            // Go : les lampes de la pièce qui ne suivent pas la musique s'éteignent en fondu.
+            room = runCatching { bridge.roomInfo(user, area.id) }.getOrNull()
+            room?.let { r -> runCatching { bridge.fadeOff(user, r.others, 2500) } }
             bridge.setStreaming(user, area.id, true)
 
             val s = HueStream(p.bridgeIp, area.id)
@@ -136,7 +140,17 @@ class DropService : Service() {
         } finally {
             audio?.stop()
             stream?.close()
-            if (user != null && areaId != null) runCatching { bridge.setStreaming(user, areaId, false) }
+            if (user != null && areaId != null) {
+                runCatching { bridge.setStreaming(user, areaId, false) }
+                // Arrêt : la pièce repasse en douceur sur la scène Apéro.
+                room?.let { r ->
+                    runCatching {
+                        Thread.sleep(400)
+                        val ok = bridge.recallScene(user, r.roomId, "Apéro", 3500)
+                        Log.i(TAG, if (ok) "retour sur la scène Apéro" else "scène Apéro introuvable dans la pièce")
+                    }
+                }
+            }
             wake?.let { if (it.isHeld) it.release() }
             wifi?.let { if (it.isHeld) it.release() }
             running = false
