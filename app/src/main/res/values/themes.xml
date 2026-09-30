@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Drop" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/nuit</item>
+        <item name="android:statusBarColor">@color/nuit</item>
+        <item name="android:navigationBarColor">@color/nuit</item>
+    </style>
+</resources>

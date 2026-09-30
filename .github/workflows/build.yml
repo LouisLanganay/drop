@@ -1,0 +1,29 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Clé de signature stable
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: mkdir -p keystore && echo "$KS" | base64 -d > keystore/debug.keystore
+      - name: Compilation
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drop-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
