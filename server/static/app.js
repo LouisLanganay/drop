@@ -97,7 +97,7 @@ async function vueSession(id, focus) {
     <div class="grid2">
       <div class="card tl">
         <div class="tlhead"><div class="seg" id="zoom"><button data-z="30">30 s</button><button data-z="120">2 min</button><button data-z="track">Morceau</button><button data-z="all">Tout</button></div>
-          <span class="hint">Molette pour zoomer, glisser pour se déplacer, toucher pour choisir un moment.</span></div>
+          <span class="hint">${matchMedia('(pointer: coarse)').matches ? 'Glisse pour te déplacer, touche pour choisir un moment.' : 'Molette pour zoomer, glisser pour se déplacer, cliquer pour choisir un moment.'}</span></div>
         <canvas id="overview"></canvas>
         <canvas id="detail"></canvas>
       </div>
