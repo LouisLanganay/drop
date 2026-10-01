@@ -8,6 +8,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
@@ -42,7 +43,7 @@ data class Track(
 object NowPlaying {
     val track = MutableStateFlow<Track?>(null)
 
-    private var controller: MediaController? = null
+    @Volatile private var controller: MediaController? = null
     private var started = false
     private val io = Executors.newSingleThreadExecutor()
     private val genreCache = HashMap<String, String?>()
@@ -52,6 +53,14 @@ object NowPlaying {
     private val callback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) = update(metadata)
         override fun onPlaybackStateChanged(state: PlaybackState?) {}
+    }
+
+    /** Position de lecture du morceau en cours, en secondes, ou null si rien ne joue. */
+    fun positionSec(): Double? {
+        val st = controller?.playbackState ?: return null
+        if (st.state != PlaybackState.STATE_PLAYING || st.position < 0) return null
+        val elapsed = SystemClock.elapsedRealtime() - st.lastPositionUpdateTime
+        return (st.position + elapsed * st.playbackSpeed) / 1000.0
     }
 
     /** À appeler depuis le fil principal. */
@@ -84,12 +93,15 @@ object NowPlaying {
         val title = md.getString(MediaMetadata.METADATA_KEY_TITLE) ?: return
         val artist = md.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: md.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST) ?: ""
         val cur = track.value
-        if (cur != null && cur.title == title && cur.artist == artist && cur.art != null) return
         val art = md.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART) ?: md.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: md.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+        // Spotify renvoie le même morceau en rafale : on ne refait rien tant que la pochette n'arrive pas.
+        val same = cur != null && cur.title == title && cur.artist == artist
+        if (same && (cur!!.art != null || art == null)) return
         val colors = art?.let { coverColors(it) } ?: emptyList()
-        track.value = Track(title, artist, art, colors)
+        track.value = Track(title, artist, art, colors, if (same) cur!!.genre else null, if (same) cur!!.mood else null)
         Log.i(TAG, "morceau : $artist, $title (${colors.size} couleurs de pochette)")
+        if (same && cur!!.genre != null) return
         val key = "$artist|$title"
         io.execute {
             val genre = if (genreCache.containsKey(key)) genreCache[key] else runCatching { deezerGenre(artist, title) }.getOrNull().also { genreCache[key] = it }
@@ -118,10 +130,11 @@ object NowPlaying {
     }
 
     fun moodOf(genre: String): Mood = when {
-        genre.contains("rap", true) || genre.contains("hip", true) || genre.contains("trap", true) -> Mood.TRAP
+        // Le reggae de Deezer couvre aussi le dancehall et la shatta : ça se joue comme du rap, pas comme une ballade.
+        listOf("rap", "hip", "trap", "reggae", "dancehall").any { genre.contains(it, true) } -> Mood.TRAP
         listOf("electro", "dance", "techno", "house").any { genre.contains(it, true) } -> Mood.HOUSE
         listOf("rock", "metal", "punk", "alternative").any { genre.contains(it, true) } -> Mood.ROCK
-        listOf("jazz", "classi", "folk", "blues", "reggae", "soul", "lounge").any { genre.contains(it, true) } -> Mood.CHILL
+        listOf("jazz", "classi", "folk", "blues", "soul", "lounge").any { genre.contains(it, true) } -> Mood.CHILL
         else -> Mood.GROOVE
     }
 

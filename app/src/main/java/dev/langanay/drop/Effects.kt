@@ -42,10 +42,11 @@ enum class Figure(val label: String) {
 /**
  * Le light show, 50 images par seconde. Son intensité suit la musique sur une échelle continue
  * (« excitation », tirée de l'énergie et de la densité des attaques) :
+ * - mesures et phrases viennent de l'analyse, calées sur la musique (premier temps, début de phrase) ;
  * - une figure par phrase de 8 mesures : unisson (accent sur le premier temps), poursuite autour du canapé,
  *   ping-pong gauche-droite, balayage aller-retour, couleurs croisées, et pour le rap et le rock noir et
  *   flash sur chaque grosse caisse ;
- * - les couleurs changent toutes les 4 mesures quand ça envoie, toutes les 8 sinon, et se répartissent
+ * - les couleurs changent toutes les 4 mesures quand ça envoie, toutes les 8 sinon, en début de mesure 1 ou 5, et se répartissent
  *   entre les lampes : elles ne font la même chose qu'en unisson ;
  * - ping-pong, poursuite et balayage jouent avec le noir (un côté éteint, deux lampes allumées au plus,
  *   un faisceau qui traverse la pièce), mais jamais toutes les lampes éteintes en même temps ; les autres
@@ -84,6 +85,8 @@ class Effects(channels: List<Channel>) {
         private set
     @Volatile var excitement = 0f
         private set
+    /** Figure jouée (son rang dans [Figure]) quand le moment en joue une, -1 sinon. */
+    val figureCode: Int get() = if (mode == "Groove" || mode == "Énergie") figure.ordinal else -1
     /** Durée du dernier stroboscope en secondes, 0 tant qu'il n'y en a pas eu. */
     @Volatile var lastStrobeLength = 0.0
         private set
@@ -92,12 +95,13 @@ class Effects(channels: List<Channel>) {
     /** Temps dans la mesure, de 1 à 4. */
     val beatInBar: Int get() = (beats % 4L).toInt() + 1
     /** Mesure dans la phrase de 8 : la figure change à la fin de la huitième. */
-    val barInPhrase: Int get() = (barsSinceFigure + 1).coerceIn(1, 8)
+    val barInPhrase: Int get() = ((beats / 4L) % 8L).toInt() + 1
     /** Couleurs principale et secondaire du moment, celles que jouent les lampes. */
     val lead: FloatArray get() = curP
     val second: FloatArray get() = curA
 
     private var lastTime = 0.0
+    /** Temps calés sur la musique : beats % 4 == 0 au premier temps, beats % 32 == 0 en début de phrase. */
     private var beats = 0L
     private var beatAt = -10.0
     private var kickAt = -10.0
@@ -151,16 +155,20 @@ class Effects(channels: List<Channel>) {
         while (true) {
             when (val e = events.poll() ?: break) {
                 is AudioEvent.Beat -> {
-                    beats++
+                    // Avance d'un temps, ou saute à la place donnée par l'analyse quand elle recale la phrase.
+                    val pos = e.bar * 4 + e.inBar
+                    beats += Math.floorMod(pos - Math.floorMod(beats, 32L).toInt() - 1, 32) + 1
                     beatAt = now
                     if (now - dropAt in 0.0..(period * 8)) {
                         // Juste après le drop : tout le groupe change de couleur à chaque temps.
                         changeLook(now, 0.06)
-                    } else if (beats % 4L == 0L) {
+                    } else if (e.inBar == 0) {
                         barsSinceLook++
                         barsSinceFigure++
-                        if (barsSinceFigure >= 8) pickFigure(mood, x)
-                        if (barsSinceLook >= (if (x > 0.5f) 4 else 8)) changeLook(now, if (x > 0.5f) 0.3 else 1.5)
+                        // Nouvelle figure en début de phrase, sauf si le drop vient d'en tirer une.
+                        if ((e.bar == 0 && barsSinceFigure >= 4) || barsSinceFigure >= 12) pickFigure(mood, x)
+                        val every = if (x > 0.5f) 4 else 8
+                        if ((e.bar % every == 0 && barsSinceLook >= 2) || barsSinceLook >= every + 2) changeLook(now, if (x > 0.5f) 0.3 else 1.5)
                     }
                 }
                 AudioEvent.Kick -> if (now - kickAt > 0.22) kickAt = now

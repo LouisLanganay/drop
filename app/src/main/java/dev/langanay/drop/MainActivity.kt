@@ -103,37 +103,37 @@ import kotlin.math.roundToInt
 
 // Identité de Drop : le noir pour le fond, la musique pour la couleur. La seule teinte de l'écran
 // vient de la pochette en cours, celle que jouent les lampes ; tout le reste est en niveaux de gris.
-private val Fond = Color(0xFF0A0A0B)
-private val Surface = Color(0xFF121214)
-private val SurfaceHaute = Color(0xFF18181B)
-private val Plan = Color(0xFF101012)
-private val Ligne = Color(0xFF1F1F23)
-private val Ligne2 = Color(0xFF26262B)
-private val LigneActive = Color(0xFF3A3A40)
-private val Eteinte = Color(0xFF1C1C20)
-private val EteinteBord = Color(0xFF2E2E33)
-private val Repere = Color(0xFF2A2A30)
-private val Neutre = Color(0xFF4A4A52)
-private val Texte = Color(0xFFF4F4F5)
-private val Secondaire = Color(0xFFA1A1AA)
-private val Tertiaire = Color(0xFF8E8E96)
-private val Alerte = Color(0xFFFF8A80)
+internal val Fond = Color(0xFF0A0A0B)
+internal val Surface = Color(0xFF121214)
+internal val SurfaceHaute = Color(0xFF18181B)
+internal val Plan = Color(0xFF101012)
+internal val Ligne = Color(0xFF1F1F23)
+internal val Ligne2 = Color(0xFF26262B)
+internal val LigneActive = Color(0xFF3A3A40)
+internal val Eteinte = Color(0xFF1C1C20)
+internal val EteinteBord = Color(0xFF2E2E33)
+internal val Repere = Color(0xFF2A2A30)
+internal val Neutre = Color(0xFF4A4A52)
+internal val Texte = Color(0xFFF4F4F5)
+internal val Secondaire = Color(0xFFA1A1AA)
+internal val Tertiaire = Color(0xFF8E8E96)
+internal val Alerte = Color(0xFFFF8A80)
 
-private val Geist = FontFamily(
+internal val Geist = FontFamily(
     Font(R.font.geist_regular, FontWeight.Normal),
     Font(R.font.geist_medium, FontWeight.Medium),
     Font(R.font.geist_semibold, FontWeight.SemiBold),
 )
-private val GeistMono = FontFamily(Font(R.font.geist_mono_medium, FontWeight.Medium))
+internal val GeistMono = FontFamily(Font(R.font.geist_mono_medium, FontWeight.Medium))
 
 /** Repères en capitales : zone, tempo, phrase, étapes. */
-private val Etiquette = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, letterSpacing = 0.9.sp)
+internal val Etiquette = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, letterSpacing = 0.9.sp)
 
-private fun corps(size: Int, weight: FontWeight = FontWeight.Normal, color: Color = Texte) =
+internal fun corps(size: Int, weight: FontWeight = FontWeight.Normal, color: Color = Texte) =
     TextStyle(fontFamily = Geist, fontWeight = weight, fontSize = size.sp, color = color)
 
 // Icônes au trait, dessinées ici pour ne pas embarquer une bibliothèque d'icônes.
-private fun trait(vararg d: String): ImageVector =
+internal fun trait(vararg d: String): ImageVector =
     ImageVector.Builder(defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
         d.forEach {
             addPath(
@@ -143,18 +143,18 @@ private fun trait(vararg d: String): ImageVector =
         }
     }.build()
 
-private val Goutte: ImageVector =
+internal val Goutte: ImageVector =
     ImageVector.Builder(defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
         addPath(addPathNodes("M12 2.5C12 2.5 5 10.1 5 14.7a7 7 0 0 0 14 0C19 10.1 12 2.5 12 2.5Z"), fill = SolidColor(Color.White))
     }.build()
-private val Chevron = trait("M6 9l6 6 6-6")
-private val Eclair = trait("M13 2L4 14h7l-1 8 9-12h-7l1-8z")
-private val Coche = trait("M5 12l5 5L20 7")
-private val Micro = trait("M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M19 11a7 7 0 0 1-14 0", "M12 18v3")
-private val Note = trait("M9 18V5l12-2v13", "M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0z", "M21 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0z")
+internal val Chevron = trait("M6 9l6 6 6-6")
+internal val Eclair = trait("M13 2L4 14h7l-1 8 9-12h-7l1-8z")
+internal val Coche = trait("M5 12l5 5L20 7")
+internal val Micro = trait("M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M19 11a7 7 0 0 1-14 0", "M12 18v3")
+internal val Note = trait("M9 18V5l12-2v13", "M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0z", "M21 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0z")
 
 /** Couleur de la pochette, éclaircie si besoin pour porter du texte noir et se lire sur le fond. */
-private fun accentDe(argb: Int): Color {
+internal fun accentDe(argb: Int): Color {
     if (argb == 0) return Texte
     var c = Color(argb)
     repeat(8) { if (c.luminance() < 0.3f) c = lerp(c, Color.White, 0.2f) }
@@ -162,7 +162,7 @@ private fun accentDe(argb: Int): Color {
 }
 
 /** Nom court et description de chaque figure, tirés des commentaires d'Effects. */
-private val FIGURES = mapOf(
+internal val FIGURES = mapOf(
     "Unisson" to ("Unisson" to "Toutes les lampes ensemble, accent sur le premier temps."),
     "Poursuite" to ("Poursuite" to "Une lampe à la fois autour du canapé, suivie d'une traîne."),
     "Ping-pong gauche-droite" to ("Ping-pong" to "Gauche sur un temps, droite sur le suivant, l'autre côté dans le noir."),
@@ -215,6 +215,7 @@ class MainActivity : ComponentActivity() {
         var areas by remember { mutableStateOf<List<EntArea>>(emptyList()) }
         var lamps by remember { mutableStateOf<List<Lamp>>(emptyList()) }
         var bridgeErr by remember { mutableStateOf<String?>(null) }
+        var analyse by remember { mutableStateOf(false) }
 
         val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { micOk = micAccorde() }
         LaunchedEffect(Unit) {
@@ -266,8 +267,10 @@ class MainActivity : ComponentActivity() {
                 micOk, askMic = { perms.launch(arrayOf(Manifest.permission.RECORD_AUDIO)) },
                 morceauOk, bridgeErr,
             ) { setup = false }
+        } else if (analyse) {
+            AnalyseScreen(lamps) { analyse = false }
         } else {
-            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr) {
+            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr, onAnalyse = { analyse = true }) {
                 DropService.stop(ctx)
                 prefs.username = null
                 prefs.clientKey = null
@@ -366,7 +369,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun ShowScreen(
         prefs: Prefs, areas: List<EntArea>, zoneId: String?, onZone: (String) -> Unit,
-        lamps: List<Lamp>, morceauOk: Boolean, bridgeErr: String?, onUnpair: () -> Unit,
+        lamps: List<Lamp>, morceauOk: Boolean, bridgeErr: String?, onAnalyse: () -> Unit, onUnpair: () -> Unit,
     ) {
         val ctx = this@MainActivity
         val state by DropService.live.collectAsState()
@@ -381,6 +384,8 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo()
                 Spacer(Modifier.weight(1f))
+                BoutonAnalyse(onAnalyse)
+                Spacer(Modifier.width(8.dp))
                 if (running) EnDirect(state.area.ifEmpty { area?.name.orEmpty() }, accent, state.beatInBar)
                 else BoutonZone(area) { sheet = true }
             }
@@ -467,6 +472,16 @@ private fun BoutonZone(area: EntArea?, onClick: () -> Unit) {
     }
 }
 
+/** Ouvre l'analyse en direct : la musique, ce que Drop en comprend et ce que jouent les lampes. */
+@Composable
+private fun BoutonAnalyse(onClick: () -> Unit) {
+    Box(
+        Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Ligne2, RoundedCornerShape(12.dp))
+            .clickable(role = Role.Button, onClickLabel = "Ouvrir l'analyse en direct", onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Courbe, contentDescription = "Analyse en direct", tint = Texte, modifier = Modifier.size(20.dp)) }
+}
+
 /** Pastille « En direct », dont le point bat les temps. */
 @Composable
 private fun EnDirect(zone: String, accent: Color, temps: Int) {
@@ -483,8 +498,9 @@ private fun EnDirect(zone: String, accent: Color, temps: Int) {
 
 /**
  * Plan de la zone vu de dessus : le canapé à l'origine des positions du pont (c'est là qu'on écoute),
- * l'avant de la pièce en haut, et chaque lampe dans la couleur qu'elle joue. Pendant le stroboscope
- * les lampes restent blanches à l'écran : le téléphone ne clignote jamais.
+ * l'avant de la pièce en haut, et chaque lampe dans la couleur qu'elle joue. Le plan garde les proportions
+ * de la pièce : même échelle sur les deux axes, étirée en hauteur d'au plus moitié pour occuper le cadre.
+ * Pendant le stroboscope les lampes restent blanches à l'écran : le téléphone ne clignote jamais.
  */
 @Composable
 private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifier: Modifier) {
@@ -501,37 +517,60 @@ private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifie
             "$n LAMPE${if (n > 1) "S" else ""}", Modifier.align(Alignment.TopEnd).offset((-16).dp, 14.dp),
             style = Etiquette.copy(color = Tertiaire),
         )
-        val cy0 = 44.dp + (h - 78.dp) / 2
+        // Emprise des lampes et du canapé (environ 0,6 sur 0,16 autour de l'origine), en coordonnées du pont.
+        val xs = lamps.map { it.x.coerceIn(-1f, 1f) } + listOf(-0.3f, 0.3f)
+        val ys = lamps.map { it.y.coerceIn(-1f, 1f) } + listOf(-0.08f, 0.08f)
+        val minX = xs.min()
+        val maxX = xs.max()
+        val minY = ys.min()
+        val maxY = ys.max()
+        val left = 56.dp
+        val top = 64.dp
+        val plotW = w - 112.dp
+        val plotH = h - top - 44.dp
+        val sx0 = plotW / max(maxX - minX, 0.2f)
+        val sy0 = plotH / max(maxY - minY, 0.2f)
+        val base = minOf(sx0, sy0)
+        val sx = minOf(sx0, base * 1.5f)
+        val sy = minOf(sy0, base * 1.5f)
+        val ox = left + (plotW - sx * (maxX - minX)) / 2
+        val oy = top + (plotH - sy * (maxY - minY)) / 2
+        fun px(x: Float) = ox + sx * (x.coerceIn(-1f, 1f) - minX)
+        fun py(y: Float) = oy + sy * (maxY - y.coerceIn(-1f, 1f))
+        val cx0 = px(0f)
+        val cy0 = py(0f)
         Box(
-            Modifier.offset(w / 2 - 64.dp, cy0 - 23.dp).size(128.dp, 46.dp).clip(RoundedCornerShape(14.dp))
+            Modifier.offset(cx0 - 56.dp, cy0 - 22.dp).size(112.dp, 44.dp).clip(RoundedCornerShape(14.dp))
                 .background(Color(0xFF141417)).border(1.dp, EteinteBord, RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) { Text("Canapé", style = corps(12, color = Tertiaire)) }
         lamps.forEach { lamp ->
-            val cx = 52.dp + (w - 104.dp) * ((lamp.x.coerceIn(-1f, 1f) + 1f) / 2f)
-            val cy = 44.dp + (h - 78.dp) * ((1f - lamp.y.coerceIn(-1f, 1f)) / 2f)
+            val cx = px(lamp.x)
+            val cy = py(lamp.y)
             val couleur = when {
                 !state.running -> null
                 strobe -> Color.White
                 else -> state.lamps[lamp.channel]?.let { Color(it) }
             }
-            Lampe(lamp, couleur, cx, cy)
+            // Une lampe collée au canapé porte son nom au-dessus, pour ne pas écrire dessus.
+            val pres = (cx - cx0).value.let { kotlin.math.abs(it) } < 56f + 52f && (cy - cy0).value.let { kotlin.math.abs(it) } < 48f
+            Lampe(lamp, couleur, cx, cy, nomDessus = pres)
         }
     }
 }
 
 @Composable
-private fun Lampe(lamp: Lamp, cible: Color?, cx: Dp, cy: Dp) {
+private fun Lampe(lamp: Lamp, cible: Color?, cx: Dp, cy: Dp, nomDessus: Boolean = false) {
     val c by animateColorAsState(cible ?: Eteinte, tween(110), label = "lampe")
     val force = max(c.red, max(c.green, c.blue))
     val allumee = cible != null && force > 0.08f
-    val lw = if (lamp.strip) 64.dp else 20.dp
+    val lw = if (lamp.strip) 150.dp else 20.dp
     val lh = if (lamp.strip) 8.dp else 20.dp
     Box(
         Modifier.offset(cx - lw / 2, cy - lh / 2).size(lw, lh)
             .drawBehind {
                 if (allumee) {
-                    val r = size.maxDimension * 1.4f + 18.dp.toPx()
+                    val r = size.maxDimension * (if (lamp.strip) 0.6f else 1.4f) + 18.dp.toPx()
                     drawCircle(
                         Brush.radialGradient(listOf(c.copy(alpha = 0.5f * force), Color.Transparent), center = center, radius = r),
                         radius = r, center = center,
@@ -543,7 +582,7 @@ private fun Lampe(lamp: Lamp, cible: Color?, cx: Dp, cy: Dp) {
             .border(1.dp, if (allumee) Color.Transparent else EteinteBord, RoundedCornerShape(10.dp)),
     )
     Text(
-        lamp.name, Modifier.offset(cx - 52.dp, cy + lh / 2 + 6.dp).width(104.dp),
+        lamp.name, Modifier.offset(cx - 52.dp, if (nomDessus) cy - lh / 2 - 22.dp else cy + lh / 2 + 6.dp).width(104.dp),
         style = corps(12, color = if (allumee) Texte else Tertiaire).copy(textAlign = TextAlign.Center),
         maxLines = 1, overflow = TextOverflow.Ellipsis,
     )

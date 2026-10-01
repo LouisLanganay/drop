@@ -121,11 +121,13 @@ class DropService : Service() {
             stream = s
 
             val effects = Effects(area.channels)
+            Timeline.reset(area.channels.map { it.id })
             var drops = 0
             val analyzer = Analyzer(48000, 512) { ev ->
                 effects.post(ev)
                 if (ev == AudioEvent.Drop) drops++
             }
+            var trackKey: String? = null
             fun applyPrefs() {
                 // Réglages fixes, choisis pour que tout soit juste sans rien toucher ; le volume de la
                 // pièce est suivi automatiquement par l'analyse.
@@ -138,6 +140,15 @@ class DropService : Service() {
                 val tr = NowPlaying.track.value
                 effects.cover = tr?.colors ?: emptyList()
                 effects.genreMood = tr?.mood
+                // Nouveau morceau : l'analyse recale la phrase sur son premier temps franc.
+                val key = tr?.let { "${it.artist}|${it.title}" }
+                if (key != null && key != trackKey) {
+                    if (trackKey != null) analyzer.newTrack()
+                    trackKey = key
+                    Timeline.mark(analyzer.now(), Timeline.Kind.TRACK, tr.title)
+                }
+                // Position de lecture : les mesures se comptent depuis le début du morceau.
+                if (key != null) NowPlaying.positionSec()?.let { analyzer.trackPosition(it, key) }
             }
             applyPrefs()
             audio = AudioEngine { analyzer.process(it) }.also { it.start(this) }
@@ -151,6 +162,7 @@ class DropService : Service() {
                 val snap = analyzer.snapshot
                 val out = effects.frame(analyzer.now(), snap)
                 s.send(out)
+                Timeline.sample(analyzer.now(), analyzer.takeLevelPeak(), snap.bass, snap.buildup, effects.excitement, effects.mode, effects.figureCode, out)
                 tick++
                 if (strobeTest) {
                     strobeTest = false

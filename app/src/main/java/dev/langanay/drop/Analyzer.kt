@@ -18,8 +18,11 @@ enum class Mood(val label: String) {
 }
 
 sealed class AudioEvent {
-    /** Un temps, émis en avance de la latence réglée pour que la lumière tombe dessus. */
-    data class Beat(val index: Long, val period: Float) : AudioEvent()
+    /**
+     * Un temps, émis en avance de la latence réglée pour que la lumière tombe dessus. [inBar] va de 0
+     * (premier temps de la mesure) à 3, [bar] de 0 (première mesure de la phrase de 8) à 7.
+     */
+    data class Beat(val index: Long, val period: Float, val inBar: Int, val bar: Int) : AudioEvent()
     data object Drop : AudioEvent()
     /** Coup de grosse caisse détecté dans les basses (sert au mode « noir et flash »). */
     data object Kick : AudioEvent()
@@ -48,6 +51,13 @@ class Snapshot(
  * Spectre sur 2048 points (23 Hz par case), attaques par flux spectral, tempo par
  * autocorrélation des attaques sur 6 secondes, phase des temps suivie et corrigée
  * par les attaques qui tombent près du temps attendu.
+ *
+ * Mesures et phrases sont calées sur la musique, pas sur Go : le premier temps est celui où tombe
+ * la grosse caisse et jamais la caisse claire, et la phrase de 8 mesures repart d'un drop, d'un
+ * nouveau morceau ou d'un changement net de section.
+ *
+ * Un drop, c'est le retour franc des basses après au moins trois mesures et demie sans elles, ou
+ * juste après une montée coupée par un trou d'au moins un temps.
  */
 class Analyzer(private val sampleRate: Int, private val hop: Int, private val emit: (AudioEvent) -> Unit) {
     private val n = 2048
@@ -111,13 +121,67 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private var hLong = 0f
     private var buildup = 0f
     private var buildupPeak = 0f
-    private var lowBassSince = -1.0
     private var lastDrop = -100.0
     private var quietSince = -1.0
     private var mood = Mood.GROOVE
 
+    // Drops : basses rapides comparées à leur crête récente (donc au volume de la pièce), et durée du
+    // trou qui a précédé chaque retour des basses.
+    private val peakDecay = exp(-dt / 60f)
+    private var bassFast = 0f
+    private var bassPeak = 1e-9f
+    private var inHit = false
+    private var hitStart = 0.0
+    private var hitGap = 0.0
+    private var hitChecked = false
+    private var lastHitEnd = 0.0
+
+    // Mesures et phrases : le temps numéro « anchor » est le premier temps de la première mesure d'une phrase.
+    private var anchor = 1L
+    /** Pas de déplacement du premier temps par les statistiques avant ce temps (après un recalage franc). */
+    private var lockUntil = 0L
+    private var lastRealign = -100L
+    // Grosse caisse et caisse claire mesurées sur chaque temps, cumulées par place dans la mesure.
+    private val kickAcc = FloatArray(4)
+    private val snareAcc = FloatArray(4)
+    private var kickMean = 0f
+    private var otherSlotBars = 0
+    private val pending = ArrayDeque<Pair<Long, Double>>()
+    private val histT = DoubleArray(64)
+    private val histB = FloatArray(64)
+    private val histM = FloatArray(64)
+    private var histPos = 0
+    // Puissance de chaque temps (tout, basses, aigus) pour repérer les changements de section.
+    private var sumFull = 0.0
+    private var sumBass = 0.0
+    private var sumHigh = 0.0
+    private var sumN = 0
+    private val beatFeat = ArrayDeque<Pair<Long, FloatArray>>()
+    private val changes = ArrayDeque<Pair<Long, Float>>()
+    @Volatile private var trackChanged = false
+    // Position de lecture rapportée par le lecteur : [position, instant sur l'horloge audio], et le morceau.
+    @Volatile private var posReport: DoubleArray? = null
+    @Volatile private var posKey: String? = null
+    private var posAlignedKey: String? = null
+    private var lastPos = -1.0
+    private var lastPosAt = 0.0
+    private var anchorOnStrongBeatUntil = -1.0
+
+    /** Niveau le plus fort depuis la dernière lecture, pour le graphe de l'écran d'analyse. */
+    @Volatile private var levelPeak = 0f
+    fun takeLevelPeak(): Float { val v = levelPeak; levelPeak = 0f; return v }
+
     @Volatile var snapshot = Snapshot(0.0, 0f, 0f, 0f, 120f, 0f, 0f, true, Mood.GROOVE, 0.0, 0.5f, 0f)
         private set
+
+    /** Nouveau morceau : le prochain temps franc devient le début d'une phrase. */
+    fun newTrack() { trackChanged = true }
+
+    /** Position de lecture du morceau [key], en secondes, à l'instant de l'appel. */
+    fun trackPosition(sec: Double, key: String) {
+        posKey = key
+        posReport = doubleArrayOf(sec, now())
+    }
 
     /** Horloge audio, prolongée entre deux blocs pour que les effets aient un temps continu. */
     fun now(): Double = frame / fps.toDouble() + (System.nanoTime() - lastFrameNanos) / 1e9
@@ -137,6 +201,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         refRms = if (rms > refRms) refRms + (rms - refRms) * 0.3f else max(refRms * 0.99893f, 0.003f)
         val level = (rms / (refRms * 0.9f)).coerceIn(0f, 1f).pow(1f / sensitivity.coerceIn(0.3f, 2f))
 
+        if (level > levelPeak) levelPeak = level
         if (rms < 0.0025f) { if (quietSince < 0) quietSince = t } else quietSince = -1.0
         val silent = quietSince >= 0 && t - quietSince > 1.2
 
@@ -150,6 +215,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         var high = 0f
         var flux = 0f
         var bassFlux = 0f
+        var midFlux = 0f
         val maxBin = (10000f / (sampleRate.toFloat() / n)).toInt()
         for (k in 1..maxBin) {
             val mag = sqrt(re[k] * re[k] + im[k] * im[k])
@@ -157,7 +223,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             val d = lm - prevLog[k]
             if (d > 0f) {
                 flux += d
-                if (k in 2..8) bassFlux += d
+                if (k in 2..8) bassFlux += d else if (k in 43..170) midFlux += d
             }
             prevLog[k] = lm
             val p = mag * mag
@@ -167,6 +233,29 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         highRef = if (high > highRef) highRef + (high - highRef) * 0.2f else max(highRef * 0.9995f, 1e-9f)
         val bassN = sqrt(bass / bassRef).coerceIn(0f, 1f)
         val highN = sqrt(high / highRef).coerceIn(0f, 1f)
+
+        if (trackChanged) {
+            trackChanged = false
+            anchorOnStrongBeatUntil = t + 6.0
+            for (i in 0..3) { kickAcc[i] *= 0.3f; snareAcc[i] *= 0.3f }
+            beatFeat.clear()
+            changes.clear()
+            lastHitEnd = t
+        }
+        histT[histPos] = t - dt
+        histB[histPos] = if (silent) 0f else bassFlux
+        histM[histPos] = if (silent) 0f else midFlux
+        histPos = (histPos + 1) % histT.size
+        if (!silent) {
+            sumFull += (rms * rms).toDouble()
+            sumBass += bass.toDouble()
+            sumHigh += high.toDouble()
+            sumN++
+        }
+        while (pending.isNotEmpty() && t - pending.first().second > 0.08) {
+            val (raw, at) = pending.removeFirst()
+            measureBeat(raw, at)
+        }
 
         // Attaques : les basses comptent triple, c'est là que vit la grosse caisse.
         val o = if (silent) 0f else 0.5f * flux + 1.5f * bassFlux
@@ -216,6 +305,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         onsetRateLong += (onsetRate - onsetRateLong) * (dt / 8f)
 
         if (frame % 47L == 0L && frame > fps * 4) estimateTempo()
+        posReport?.let { r -> posReport = null; alignFromPosition(r[0], r[1], posKey) }
         trackBeat(t, onset, onsetTime)
 
         // Sections : montée (basses retirées, aigus et roulements qui grimpent) puis drop (retour des basses).
@@ -227,24 +317,47 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         hLong += (highN - hLong) * (dt / 8f)
 
         val bassDown = bShort < bLong * 0.7f
-        val building = !silent && ((hShort > hLong * 1.1f && bassDown) ||
+        val building = !silent && t > 6.0 && ((hShort > hLong * 1.1f && bassDown) ||
             (bassDown && onsetRate > onsetRateLong * 1.2f && eShort > 0.25f) ||
             (hShort > hLong * 1.3f && onsetRate > onsetRateLong * 1.2f))
         buildup = if (building) min(1f, buildup + dt / 4f) else max(0f, buildup - dt / 1.5f)
         buildupPeak = max(buildup, buildupPeak - dt / 4f)
 
-        if (bShort < bLong * 0.55f) { if (lowBassSince < 0) lowBassSince = t }
-        val lowBassFor = if (lowBassSince >= 0) t - lowBassSince else 0.0
-        val bassBack = bassN > 0.6f && bShort > max(0.45f, bLong * 1.2f)
-        if (bassBack && t - lastDrop > 6.0 && eShort > 0.4f && (buildupPeak > 0.25f || lowBassFor > 1.0)) {
-            Log.i(TAG, "DROP à ${"%.1f".format(t)} s (montée ${"%.2f".format(buildupPeak)}, basses absentes ${"%.1f".format(lowBassFor)} s)")
-            lastDrop = t
-            buildup = 0f
-            buildupPeak = 0f
-            lowBassSince = -1.0
-            emit(AudioEvent.Drop)
+        // Drop : les basses reviennent (à -3 dB de leur crête) après un trou assez long, ou après une montée.
+        bassFast += (bass - bassFast) * min(1f, dt / 0.08f)
+        bassPeak = if (bassFast > bassPeak) bassFast else max(bassPeak * peakDecay, 1e-9f)
+        val hit = !silent && bassFast > 0.25f * bassPeak
+        if (silent) lastHitEnd = t // un silence entre deux morceaux n'est pas un passage sans basses
+        if (hit && !inHit) {
+            inHit = true
+            hitStart = t
+            hitGap = t - lastHitEnd
+            hitChecked = false
+        } else if (!hit && inHit) {
+            inHit = false
+            lastHitEnd = t
         }
-        if (bShort > bLong * 0.8f) lowBassSince = -1.0
+        if (inHit && !hitChecked && bassFast > 0.5f * bassPeak) {
+            hitChecked = true
+            val beat = 60.0 / bpm
+            val longGap = hitGap >= max(6.0, 14 * beat)
+            val afterBuild = buildupPeak > 0.5f && hitGap >= beat + 0.1
+            if ((longGap || afterBuild) && t - lastDrop > 15.0 && t > 3.0) {
+                Log.i(TAG, "DROP à ${"%.1f".format(t)} s (basses absentes ${"%.1f".format(hitGap)} s, montée ${"%.2f".format(buildupPeak)})")
+                lastDrop = t
+                buildup = 0f
+                buildupPeak = 0f
+                // Le drop tombe sur le premier temps d'une phrase : celui des deux temps voisins le plus proche du retour des basses.
+                val next = lastBeatEmitted + beat
+                realign(if (abs(next - hitStart) < abs(lastBeatEmitted - hitStart)) beatIndex + 1 else beatIndex, "drop")
+                Timeline.mark(hitStart, Timeline.Kind.DROP, "Drop · ${"%.1f".format(hitGap)} s sans basses")
+                emit(AudioEvent.Drop)
+            } else if (hitGap >= 3.0) {
+                Log.i(TAG, "basses de retour après ${"%.1f".format(hitGap)} s, pas un drop (montée ${"%.2f".format(buildupPeak)})")
+                Timeline.mark(hitStart, Timeline.Kind.NOT_DROP, "Pas un drop · ${"%.1f".format(hitGap)} s")
+            }
+        }
+        if (inHit && t - hitStart > 0.3) hitChecked = true
 
         if (frame % 188L == 0L) {
             mood = when {
@@ -259,7 +372,8 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         snapshot = Snapshot(t, level, bShort, hShort, bpm, conf, buildup, silent, mood, lastBeatEmitted, 60f / bpm, onsetRate)
 
         if (frame % 94L == 0L) {
-            Log.i(TAG, "bpm ${"%.1f".format(bpm)} conf ${"%.2f".format(conf)} niveau ${"%.2f".format(level)} " +
+            val pos = Math.floorMod(beatIndex - anchor, 32L).toInt()
+            Log.i(TAG, "mesure ${pos / 4 + 1}/8 temps ${pos % 4 + 1} bpm ${"%.1f".format(bpm)} conf ${"%.2f".format(conf)} niveau ${"%.2f".format(level)} " +
                 "basses ${"%.2f".format(bShort)}/${"%.2f".format(bLong)} aigus ${"%.2f".format(hShort)}/${"%.2f".format(hLong)} " +
                 "montée ${"%.2f".format(buildup)} attaques/s ${"%.1f".format(onsetRate)} style ${mood.label}${if (silent) " (silence)" else ""}")
         }
@@ -355,8 +469,147 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private fun fire(at: Double, period: Double) {
         emittedFor = at
         lastBeatEmitted = at
+        closeBeat(beatIndex)
         beatIndex++
-        emit(AudioEvent.Beat(beatIndex, period.toFloat()))
+        pending.addLast(beatIndex to at)
+        val pos = Math.floorMod(beatIndex - anchor, 32L).toInt()
+        Timeline.mark(at, Timeline.Kind.BEAT, value = pos)
+        emit(AudioEvent.Beat(beatIndex, period.toFloat(), pos % 4, pos / 4))
+    }
+
+    /** Le temps [raw] devient le premier temps d'une phrase. */
+    private fun realign(raw: Long, why: String) {
+        anchor = raw
+        lockUntil = raw + 32
+        lastRealign = raw
+        otherSlotBars = 0
+        Log.i(TAG, "phrase recalée : $why")
+        Timeline.mark(lastBeatEmitted, Timeline.Kind.REALIGN, "Recalé · ${why.substringBefore(" (")}")
+    }
+
+    /**
+     * Un temps mesuré après coup, une fois son audio arrivé : grosse caisse (flux des basses) et caisse
+     * claire (flux de 1 à 4 kHz) au plus fort dans les 50 ms autour du temps.
+     */
+    private fun measureBeat(raw: Long, at: Double) {
+        var k = 0f
+        var m = 0f
+        for (i in histT.indices) if (abs(histT[i] - at) <= 0.05) { k = max(k, histB[i]); m = max(m, histM[i]) }
+        val slot = Math.floorMod(raw, 4L).toInt()
+        kickAcc[slot] = kickAcc[slot] * 0.85f + k
+        snareAcc[slot] = snareAcc[slot] * 0.85f + m
+        kickMean += (k - kickMean) * 0.1f
+
+        if (anchorOnStrongBeatUntil > 0) {
+            if (at > anchorOnStrongBeatUntil) anchorOnStrongBeatUntil = -1.0
+            else if (k > max(1.2f * kickMean, 0.5f)) {
+                anchorOnStrongBeatUntil = -1.0
+                realign(raw, "nouveau morceau")
+            }
+        }
+        if (Math.floorMod(raw - anchor, 4L) == 3L) checkDownbeat()
+    }
+
+    /**
+     * Une fois par mesure : la place du premier temps est celle où la grosse caisse est la plus forte et la caisse
+     * claire absente, la caisse claire tombant sur 2 et 4 (ou sur 3 en demi-tempo). On ne déplace le premier temps
+     * que si une autre place l'emporte nettement pendant quatre mesures de suite.
+     */
+    private fun checkDownbeat() {
+        if (beatIndex < lockUntil) return
+        val kn = normalized(kickAcc) ?: return
+        val sn = normalized(snareAcc) ?: return
+        fun score(d: Int) = kn[d] - sn[d] + 0.5f * max((sn[(d + 1) % 4] + sn[(d + 3) % 4]) / 2f, sn[(d + 2) % 4])
+        val cur = Math.floorMod(anchor, 4L).toInt()
+        var best = cur
+        for (d in 0..3) if (score(d) > score(best)) best = d
+        otherSlotBars = if (best != cur && score(best) - score(cur) > 0.35f) otherSlotBars + 1 else 0
+        if (otherSlotBars >= 4) {
+            val shift = (best - cur + 4) % 4
+            anchor += if (shift == 3) -1 else shift.toLong()
+            otherSlotBars = 0
+            Log.i(TAG, "premier temps déplacé d'un cran de $shift (grosse caisse et caisse claire)")
+            Timeline.mark(lastBeatEmitted, Timeline.Kind.REALIGN, "1er temps déplacé")
+        }
+    }
+
+    /**
+     * Les morceaux commencent sur le premier temps d'une phrase : la position de lecture donne donc le rang du
+     * temps en cours depuis le début, à un temps près (latence du son, silence d'ouverture), que la grosse caisse
+     * et la caisse claire départagent. Fait une fois par morceau, et à nouveau si on avance ou recule dans le
+     * morceau ; au-delà d'une minute, l'écart de tempo cumulé dépasserait un temps, l'analyse du son prend le relais.
+     */
+    private fun alignFromPosition(pos: Double, at: Double, key: String?) {
+        if (key == null) return
+        val seek = key == posAlignedKey && lastPos >= 0 && abs(pos - (lastPos + (at - lastPosAt))) > 1.5
+        lastPos = pos
+        lastPosAt = at
+        if (seek) { posAlignedKey = null; Log.i(TAG, "saut dans le morceau à ${"%.0f".format(pos)} s") }
+        if (key == posAlignedKey || beatTime < 0 || conf < 0.2f || pos < 8.0 || pos > 60.0) return
+        val period = 60.0 / bpm
+        // Position dans le morceau du dernier temps émis, en comptant ~0,1 s de latence entre le haut-parleur et l'analyse.
+        val beatPos = pos - (at - lastBeatEmitted) - 0.1
+        val n = kotlin.math.round(beatPos / period).toLong()
+        var a = beatIndex - n
+        val kn = normalized(kickAcc)
+        val sn = normalized(snareAcc)
+        if (kn != null && sn != null) {
+            fun score(d: Int) = kn[d] - sn[d] + 0.5f * max((sn[(d + 1) % 4] + sn[(d + 3) % 4]) / 2f, sn[(d + 2) % 4])
+            val base = a
+            for (shift in longArrayOf(-1L, 1L)) {
+                val d = Math.floorMod(base + shift, 4L).toInt()
+                if (score(d) > score(Math.floorMod(a, 4L).toInt()) + 0.2f) a = base + shift
+            }
+        }
+        posAlignedKey = key
+        val before = Math.floorMod(beatIndex - anchor, 32L).toInt()
+        anchor = a
+        lockUntil = beatIndex + 32
+        lastRealign = beatIndex
+        otherSlotBars = 0
+        val after = Math.floorMod(beatIndex - anchor, 32L).toInt()
+        Timeline.mark(lastBeatEmitted, Timeline.Kind.REALIGN, "Recalé · position ${"%.0f".format(pos)} s")
+        Log.i(TAG, "phrase recalée sur la position ${"%.1f".format(pos)} s : mesure ${after / 4 + 1} temps ${after % 4 + 1} (était mesure ${before / 4 + 1} temps ${before % 4 + 1})")
+    }
+
+    private fun normalized(a: FloatArray): FloatArray? {
+        val m = a.sum() / 4f
+        return if (m <= 1e-6f) null else FloatArray(4) { a[it] / m }
+    }
+
+    /**
+     * Ferme le temps [raw] : sa puissance moyenne (tout, basses, aigus) entre dans l'historique. Un temps qui change
+     * nettement (4 dB ou plus) par rapport aux 8 d'avant, sur les 4 temps qu'il ouvre, est un début de section.
+     */
+    private fun closeBeat(raw: Long) {
+        if (sumN == 0) { beatFeat.clear(); changes.clear(); return }
+        fun db(v: Double) = (10.0 * kotlin.math.log10(v + 1e-12)).toFloat()
+        beatFeat.addLast(raw to floatArrayOf(db(sumFull / sumN), db(sumBass / sumN), db(sumHigh / sumN)))
+        sumFull = 0.0; sumBass = 0.0; sumHigh = 0.0; sumN = 0
+        if (beatFeat.size > 12) beatFeat.removeFirst()
+        if (beatFeat.size < 12) return
+        var chg = 0f
+        for (band in 0..2) {
+            var before = 0f
+            var after = 0f
+            for (i in 0 until 8) before += beatFeat[i].second[band]
+            for (i in 8 until 12) after += beatFeat[i].second[band]
+            chg = max(chg, abs(after / 4f - before / 8f) * (if (band == 0) 1f else 0.7f))
+        }
+        changes.addLast(beatFeat[8].first to chg)
+        if (changes.size > 3) changes.removeFirst()
+        if (changes.size == 3) {
+            val (r, c) = changes[1]
+            if (c >= 4f && c >= changes[0].second && c > changes[2].second) sectionStart(r, c)
+        }
+    }
+
+    private fun sectionStart(raw: Long, db: Float) {
+        val pos = Math.floorMod(raw - anchor, 32L).toInt()
+        if (pos % 16 == 0) return // déjà en début ou au milieu d'une phrase
+        if (raw - lastRealign < 32) return // recalé il y a moins de 8 mesures
+        if (pos % 4 != 0 && db < 6f) return // contredire le premier temps demande un changement très net
+        realign(raw, "début de section (${"%.1f".format(db)} dB, était mesure ${pos / 4 + 1} temps ${pos % 4 + 1})")
     }
 
     private fun fft(re: FloatArray, im: FloatArray) {
