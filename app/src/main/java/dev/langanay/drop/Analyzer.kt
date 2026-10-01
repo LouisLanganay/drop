@@ -60,7 +60,7 @@ class Snapshot(
  * la grosse caisse et jamais la caisse claire, et la phrase de 8 mesures repart d'un drop, d'un
  * nouveau morceau ou d'un changement net de section.
  *
- * Un drop, c'est un bloc de basses qui arrive au moins 5 dB au-dessus de l'énergie des quatre mesures d'avant
+ * Un drop, c'est un bloc de basses qui arrive au moins 6 dB au-dessus de l'énergie des quatre mesures d'avant
  * (ou juste après une montée coupée par un trou), au niveau des passages forts du morceau, et qui tient toute
  * sa première mesure : un coup de basse de deux ou trois temps avant le vrai drop n'en est pas un. Une coupure d'une ou deux mesures dans un groove n'en est pas un : les mesures pleines d'avant la
  * coupure gardent l'énergie haute. Le niveau des passages forts est le 80e centile des temps de la dernière
@@ -339,7 +339,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         bassMid += (bass - bassMid) * min(1f, dt / 0.4f)
         if (candidateAt >= 0 && t - candidateAt > 6.0) cancelDrop(t, "le tempo s'est perdu")
         if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastDrop > 15.0 && t - lastCancel > 0.5 &&
-            db(bassMid) >= loudBass - 6f && (db(bassMid) >= lowLevel + 5f || (buildupPeak > 0.5f && lastBeatLow))
+            db(bassMid) >= loudBass - 4f && (db(bassMid) >= lowLevel + 6f || (buildupPeak > 0.5f && lastBeatLow))
         ) {
             // Le retour des basses a précédé d'environ 0,15 s le franchissement du seuil : temps le plus proche de ce retour.
             val back = t - 0.15
@@ -621,9 +621,10 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
 
     /**
      * La première mesure du drop possible est fermée. Il tient si son niveau (moyenne en dB des quatre temps : un
-     * coup isolé ne la tire pas) reste proche des passages forts, au moins 5 dB au-dessus de l'énergie des quatre
-     * mesures d'avant, sans temps qui s'effondre (le trou qui suit un coup de basse annonçant le drop). Réglé sur
-     * les enregistrements du 01/10 (« Lunettes », « Charger »).
+     * coup isolé ne la tire pas) atteint les passages forts à 3 dB près (une montée d'énergie avant le drop reste
+     * en dessous), au moins 6 dB au-dessus de l'énergie des quatre mesures d'avant, sans temps qui s'effondre (le
+     * trou qui suit un coup de basse annonçant le drop). Réglé sur les enregistrements du 01/10 (« Lunettes »,
+     * « Charger ») et les verdicts de Louis.
      */
     private fun settleDrop() {
         val t = frame / fps.toDouble()
@@ -633,7 +634,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         val level = v.average().toFloat()
         val weakest = v.min()
         val rise = level - candidateLow
-        if (level >= loudBass - 6f && rise >= 5f && weakest >= max(loudBass - 12f, level - 12f)) {
+        if (level >= loudBass - 3f && rise >= 6f && weakest >= max(loudBass - 12f, level - 12f)) {
             lastDrop = t
             buildup = 0f
             buildupPeak = 0f

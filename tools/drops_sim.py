@@ -1,11 +1,12 @@
-# Usage : python3 tools/drops_sim.py <enregistrement.csv> [temps de confirmation=4] [attente après annulation=0.5] [écart max aux passages forts=6] [montée min=5]
+# Usage : python3 tools/drops_sim.py <enregistrement.csv> [temps de confirmation=4] [attente après annulation=0.5] [écart max aux passages forts=3] [montée min=6] [seuil de déclenchement=4]
 # Rejoue la règle de drop de Analyzer.kt sur un enregistrement (files/recordings, voir Recorder.kt).
 """Simule la règle de drop sur un enregistrement : candidats au retour des basses, confirmation sur N temps."""
 import sys, math, numpy as np
 path=sys.argv[1]; N=int(sys.argv[2]) if len(sys.argv)>2 else 4
 COOL=float(sys.argv[3]) if len(sys.argv)>3 else 0.5
-LOUD=float(sys.argv[4]) if len(sys.argv)>4 else 6
+LOUD=float(sys.argv[4]) if len(sys.argv)>4 else 3
 RISE=float(sys.argv[5]) if len(sys.argv)>5 else 6
+TRIG=float(sys.argv[6]) if len(sys.argv)>6 else 4
 fr=[];ev=[]
 for l in open(path):
     p=l.rstrip('\n').split(',')
@@ -53,7 +54,7 @@ for k in range(len(t)):
             cand=None
     if cand is None and loud is not None and tt-lastDrop>15 and tt-lastCancel>COOL:
         m=db(bmid[k])
-        if m>=loud-LOUD and m>=low+RISE:
+        if m>=loud-TRIG and m>=low+RISE:
             back=tt-0.15
             j=min(range(len(bt)),key=lambda i:abs(bt[i]-back))
             cand={'t':bt[j],'beat':j,'low':low}
