@@ -26,7 +26,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,10 +138,28 @@ internal fun AnalyseScreen(lamps: List<Lamp>, onBack: () -> Unit) {
             val fin = fige ?: finActuelle()
             dessiner(mesureur, fin, fenetre, ordre, accent, vivant = fige == null && state.running)
         }
-        Text(
-            if (fige != null) "Figé. Touche le graphe pour reprendre." else "Touche le graphe pour le figer.",
-            style = corps(12, color = Secondaire),
-        )
+        val ctx = LocalContext.current
+        val scope = rememberCoroutineScope()
+        var sauve by remember { mutableStateOf<String?>(null) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                sauve ?: if (fige != null) "Figé. Touche le graphe pour reprendre." else "Touche le graphe pour le figer.",
+                Modifier.weight(1f), style = corps(12, color = Secondaire), maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+            Box(
+                Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Repere, RoundedCornerShape(12.dp))
+                    .clickable(role = Role.Button, onClickLabel = "Enregistrer les 5 dernières minutes") {
+                        scope.launch {
+                            val f = withContext(Dispatchers.IO) { runCatching { Recorder.save(ctx) }.getOrNull() }
+                            sauve = if (f != null) "Enregistré : ${f.name}" else "Rien à enregistrer."
+                            delay(5000)
+                            sauve = null
+                        }
+                    }
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Enregistrer", style = corps(14, FontWeight.Medium)) }
+        }
     }
 }
 

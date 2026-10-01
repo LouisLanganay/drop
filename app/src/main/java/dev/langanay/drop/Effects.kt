@@ -51,8 +51,9 @@ enum class Figure(val label: String) {
  * - ping-pong, poursuite et balayage jouent avec le noir (un côté éteint, deux lampes allumées au plus,
  *   un faisceau qui traverse la pièce), mais jamais toutes les lampes éteintes en même temps ; les autres
  *   figures pulsent sur une nappe ;
- * - montée : poursuite qui accélère et blanchit ; drop : stroboscope de 2,5 à 4 secondes (si activé), toutes
- *   les lampes ensemble, puis deux mesures où tout le groupe change de couleur à chaque temps.
+ * - montée : poursuite qui accélère et blanchit ; drop : l'explosion part dès le retour des basses (tout le groupe
+ *   change de couleur à chaque temps), le stroboscope de 2,5 à 4 secondes (si activé, toutes les lampes ensemble)
+ *   quand l'analyse confirme le drop deux temps plus tard ; un retour qui ne tient pas rend la main à la figure.
  * Les couleurs viennent de la pochette (complétées de teintes voisines si elle en a peu) ou du style.
  */
 class Effects(channels: List<Channel>) {
@@ -173,6 +174,11 @@ class Effects(channels: List<Channel>) {
                 }
                 AudioEvent.Kick -> if (now - kickAt > 0.22) kickAt = now
                 AudioEvent.Impact -> {}
+                AudioEvent.DropStart -> if (dropFx) {
+                    dropAt = now
+                    pickFigure(mood, 1f)
+                }
+                AudioEvent.DropCancel -> if (now >= strobeUntil) dropAt = -100.0
                 AudioEvent.Drop -> if (dropFx) drop(now, mood, test = false)
             }
         }

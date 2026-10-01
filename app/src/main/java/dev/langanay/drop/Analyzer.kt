@@ -28,6 +28,10 @@ sealed class AudioEvent {
     data object Kick : AudioEvent()
     /** Brusque montée d'énergie : accent de stroboscope. */
     data object Impact : AudioEvent()
+    /** Les basses reviennent après deux mesures sans elles : l'explosion part tout de suite, le stroboscope attend. */
+    data object DropStart : AudioEvent()
+    /** Le retour des basses n'a pas tenu deux temps : ce n'était pas un drop, le show reprend sa figure. */
+    data object DropCancel : AudioEvent()
 }
 
 /** Ce que les effets lisent à chaque image, écrit par le fil audio. */
@@ -56,8 +60,9 @@ class Snapshot(
  * la grosse caisse et jamais la caisse claire, et la phrase de 8 mesures repart d'un drop, d'un
  * nouveau morceau ou d'un changement net de section.
  *
- * Un drop, c'est le retour franc des basses après au moins trois mesures et demie sans elles, ou
- * juste après une montée coupée par un trou d'au moins un temps.
+ * Un drop, c'est un bloc de basses qui arrive au moins 6 dB au-dessus des deux mesures d'avant (ou juste après
+ * une montée coupée par un trou), au niveau des passages forts du morceau, et qui tient deux temps. Le niveau
+ * des passages forts est le 80e centile des temps de la dernière minute : un coup isolé ne le fausse pas.
  */
 class Analyzer(private val sampleRate: Int, private val hop: Int, private val emit: (AudioEvent) -> Unit) {
     private val n = 2048
@@ -125,16 +130,17 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private var quietSince = -1.0
     private var mood = Mood.GROOVE
 
-    // Drops : basses rapides comparées à leur crête récente (donc au volume de la pièce), et durée du
-    // trou qui a précédé chaque retour des basses.
-    private val peakDecay = exp(-dt / 60f)
-    private var bassFast = 0f
-    private var bassPeak = 1e-9f
-    private var inHit = false
-    private var hitStart = 0.0
-    private var hitGap = 0.0
-    private var hitChecked = false
-    private var lastHitEnd = 0.0
+    // Drops : basses moyennées sur environ un temps, comparées au niveau des basses des passages forts
+    // (80e centile des temps de la dernière minute, en dB).
+    private var bassMid = 0f
+    private val bassBeats = ArrayDeque<Float>()
+    private var loudBass = Float.NaN
+    private var lastBeatLow = false
+    private var lowLevel = 0f
+    private var candidateAt = -1.0
+    private var candidateBeat = 0L
+    private var candidateLow = 0f
+    private var lastCancel = -100.0
 
     // Mesures et phrases : le temps numéro « anchor » est le premier temps de la première mesure d'une phrase.
     private var anchor = 1L
@@ -240,7 +246,9 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             for (i in 0..3) { kickAcc[i] *= 0.3f; snareAcc[i] *= 0.3f }
             beatFeat.clear()
             changes.clear()
-            lastHitEnd = t
+            bassBeats.clear()
+            loudBass = Float.NaN
+            Recorder.event(t, "track")
         }
         histT[histPos] = t - dt
         histB[histPos] = if (silent) 0f else bassFlux
@@ -323,41 +331,25 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         buildup = if (building) min(1f, buildup + dt / 4f) else max(0f, buildup - dt / 1.5f)
         buildupPeak = max(buildup, buildupPeak - dt / 4f)
 
-        // Drop : les basses reviennent (à -3 dB de leur crête) après un trou assez long, ou après une montée.
-        bassFast += (bass - bassFast) * min(1f, dt / 0.08f)
-        bassPeak = if (bassFast > bassPeak) bassFast else max(bassPeak * peakDecay, 1e-9f)
-        val hit = !silent && bassFast > 0.25f * bassPeak
-        if (silent) lastHitEnd = t // un silence entre deux morceaux n'est pas un passage sans basses
-        if (hit && !inHit) {
-            inHit = true
-            hitStart = t
-            hitGap = t - lastHitEnd
-            hitChecked = false
-        } else if (!hit && inHit) {
-            inHit = false
-            lastHitEnd = t
+        // Drop, en deux temps. Les basses reviennent au niveau des passages forts après deux mesures pauvres en
+        // basses (ou après une montée coupée d'un trou) : l'explosion part tout de suite. Elles tiennent les deux
+        // premiers temps : c'est confirmé à la fermeture du deuxième, le stroboscope part et la phrase repart du drop.
+        bassMid += (bass - bassMid) * min(1f, dt / 0.4f)
+        if (candidateAt >= 0 && t - candidateAt > 4.0) cancelDrop(t, "le tempo s'est perdu")
+        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastDrop > 15.0 && t - lastCancel > 8.0 &&
+            db(bassMid) >= loudBass - 4f && (db(bassMid) >= lowLevel + 6f || (buildupPeak > 0.5f && lastBeatLow))
+        ) {
+            // Le retour des basses a précédé d'environ 0,15 s le franchissement du seuil : temps le plus proche de ce retour.
+            val back = t - 0.15
+            val next = lastBeatEmitted + 60.0 / bpm
+            candidateAt = back
+            candidateBeat = if (abs(next - back) < abs(lastBeatEmitted - back)) beatIndex + 1 else beatIndex
+            candidateLow = lowLevel
+            Log.i(TAG, "drop possible à ${"%.1f".format(back)} s (+${"%.1f".format(db(bassMid) - lowLevel)} dB sur les deux mesures d'avant, montée ${"%.2f".format(buildupPeak)})")
+            Recorder.event(back, "drop_start", "low=${"%.1f".format(lowLevel)} ref=${"%.1f".format(loudBass)}")
+            emit(AudioEvent.DropStart)
         }
-        if (inHit && !hitChecked && bassFast > 0.5f * bassPeak) {
-            hitChecked = true
-            val beat = 60.0 / bpm
-            val longGap = hitGap >= max(6.0, 14 * beat)
-            val afterBuild = buildupPeak > 0.5f && hitGap >= beat + 0.1
-            if ((longGap || afterBuild) && t - lastDrop > 15.0 && t > 3.0) {
-                Log.i(TAG, "DROP à ${"%.1f".format(t)} s (basses absentes ${"%.1f".format(hitGap)} s, montée ${"%.2f".format(buildupPeak)})")
-                lastDrop = t
-                buildup = 0f
-                buildupPeak = 0f
-                // Le drop tombe sur le premier temps d'une phrase : celui des deux temps voisins le plus proche du retour des basses.
-                val next = lastBeatEmitted + beat
-                realign(if (abs(next - hitStart) < abs(lastBeatEmitted - hitStart)) beatIndex + 1 else beatIndex, "drop")
-                Timeline.mark(hitStart, Timeline.Kind.DROP, "Drop · ${"%.1f".format(hitGap)} s sans basses")
-                emit(AudioEvent.Drop)
-            } else if (hitGap >= 3.0) {
-                Log.i(TAG, "basses de retour après ${"%.1f".format(hitGap)} s, pas un drop (montée ${"%.2f".format(buildupPeak)})")
-                Timeline.mark(hitStart, Timeline.Kind.NOT_DROP, "Pas un drop · ${"%.1f".format(hitGap)} s")
-            }
-        }
-        if (inHit && t - hitStart > 0.3) hitChecked = true
+        Recorder.frame(t, rms * rms, bass, high, bassFlux, midFlux, o, level, bassMid, bpm, conf)
 
         if (frame % 188L == 0L) {
             mood = when {
@@ -474,6 +466,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         pending.addLast(beatIndex to at)
         val pos = Math.floorMod(beatIndex - anchor, 32L).toInt()
         Timeline.mark(at, Timeline.Kind.BEAT, value = pos)
+        Recorder.event(at, "beat", "$beatIndex $pos")
         emit(AudioEvent.Beat(beatIndex, period.toFloat(), pos % 4, pos / 4))
     }
 
@@ -484,6 +477,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         lastRealign = raw
         otherSlotBars = 0
         Log.i(TAG, "phrase recalée : $why")
+        Recorder.event(lastBeatEmitted, "realign", "$raw $why")
         Timeline.mark(lastBeatEmitted, Timeline.Kind.REALIGN, "Recalé · ${why.substringBefore(" (")}")
     }
 
@@ -584,9 +578,12 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private fun closeBeat(raw: Long) {
         if (sumN == 0) { beatFeat.clear(); changes.clear(); return }
         fun db(v: Double) = (10.0 * kotlin.math.log10(v + 1e-12)).toFloat()
-        beatFeat.addLast(raw to floatArrayOf(db(sumFull / sumN), db(sumBass / sumN), db(sumHigh / sumN)))
+        val bassDb = db(sumBass / sumN)
+        beatFeat.addLast(raw to floatArrayOf(db(sumFull / sumN), bassDb, db(sumHigh / sumN)))
         sumFull = 0.0; sumBass = 0.0; sumHigh = 0.0; sumN = 0
         if (beatFeat.size > 12) beatFeat.removeFirst()
+        updateBassContext(bassDb)
+        if (candidateAt >= 0 && raw >= candidateBeat + 1) settleDrop()
         if (beatFeat.size < 12) return
         var chg = 0f
         for (band in 0..2) {
@@ -602,6 +599,53 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             val (r, c) = changes[1]
             if (c >= 4f && c >= changes[0].second && c > changes[2].second) sectionStart(r, c)
         }
+    }
+
+    private fun db(v: Float) = 10f * kotlin.math.log10(v + 1e-12f)
+
+    /** Basses du temps qui vient de se fermer : niveau des passages forts, et moyenne des deux dernières mesures. */
+    private fun updateBassContext(bassDb: Float) {
+        bassBeats.addLast(bassDb)
+        if (bassBeats.size > 140) bassBeats.removeFirst()
+        if (bassBeats.size < 16) return
+        val sorted = bassBeats.sorted()
+        loudBass = sorted[(sorted.size * 0.8f).toInt().coerceAtMost(sorted.size - 1)]
+        var sum = 0f
+        for (i in bassBeats.size - 8 until bassBeats.size) sum += bassBeats[i]
+        lowLevel = sum / 8f
+        lastBeatLow = bassDb <= loudBass - 6f
+    }
+
+    /** Les deux premiers temps du drop possible sont fermés : il tient (confirmé) ou non (annulé). */
+    private fun settleDrop() {
+        val t = frame / fps.toDouble()
+        val a = beatFeat.firstOrNull { it.first == candidateBeat }?.second?.get(1)
+        val b = beatFeat.firstOrNull { it.first == candidateBeat + 1 }?.second?.get(1)
+        if (a == null || b == null) { cancelDrop(t, "temps manquants"); return }
+        val level = (a + b) / 2f
+        val rise = level - candidateLow
+        if (level >= loudBass - 3f && rise >= 6f) {
+            lastDrop = t
+            buildup = 0f
+            buildupPeak = 0f
+            Log.i(TAG, "DROP confirmé à ${"%.1f".format(candidateAt)} s (+${"%.1f".format(rise)} dB sur les deux mesures d'avant, ${"%.1f".format(loudBass - level)} dB sous la référence)")
+            Recorder.event(candidateAt, "drop", "rise=${"%.1f".format(rise)} level=${"%.1f".format(level)} ref=${"%.1f".format(loudBass)}")
+            Timeline.mark(candidateAt, Timeline.Kind.DROP, "Drop · +${"%.0f".format(rise)} dB")
+            realign(candidateBeat, "drop")
+            candidateAt = -1.0
+            emit(AudioEvent.Drop)
+        } else {
+            cancelDrop(t, "+${"%.1f".format(rise)} dB, ${"%.1f".format(loudBass - level)} dB sous la référence")
+        }
+    }
+
+    private fun cancelDrop(t: Double, why: String) {
+        Log.i(TAG, "pas un drop : $why")
+        Recorder.event(candidateAt, "drop_cancel", why)
+        Timeline.mark(candidateAt, Timeline.Kind.NOT_DROP, "Pas un drop")
+        candidateAt = -1.0
+        lastCancel = t
+        emit(AudioEvent.DropCancel)
     }
 
     private fun sectionStart(raw: Long, db: Float) {

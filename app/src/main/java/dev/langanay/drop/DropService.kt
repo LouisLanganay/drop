@@ -122,6 +122,7 @@ class DropService : Service() {
 
             val effects = Effects(area.channels)
             Timeline.reset(area.channels.map { it.id })
+            Recorder.reset()
             var drops = 0
             val analyzer = Analyzer(48000, 512) { ev ->
                 effects.post(ev)
@@ -146,6 +147,7 @@ class DropService : Service() {
                     if (trackKey != null) analyzer.newTrack()
                     trackKey = key
                     Timeline.mark(analyzer.now(), Timeline.Kind.TRACK, tr.title)
+                    Recorder.event(analyzer.now(), "title", "${tr.artist} - ${tr.title}")
                 }
                 // Position de lecture : les mesures se comptent depuis le début du morceau.
                 if (key != null) NowPlaying.positionSec()?.let { analyzer.trackPosition(it, key) }
@@ -190,6 +192,8 @@ class DropService : Service() {
             live.value = LiveState(running = false, status = "Erreur", error = messageErreur(e))
         } finally {
             audio?.stop()
+            // L'enregistrement des 5 dernières minutes, pour régler la détection hors ligne.
+            runCatching { Recorder.save(this)?.let { Log.i(TAG, "enregistrement : ${it.name}") } }
             stream?.close()
             if (user != null && areaId != null) {
                 runCatching { bridge.setStreaming(user, areaId, false) }
