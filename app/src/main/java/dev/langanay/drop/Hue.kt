@@ -25,7 +25,16 @@ const val TAG = "Drop"
 
 data class Channel(val id: Int, val x: Float, val y: Float, val z: Float)
 data class EntArea(val id: String, val name: String, val active: Boolean, val channels: List<Channel>)
+/** Une lampe de la zone pour le plan de l'écran : son canal, son nom dans l'app Hue, sa position, et si c'est un ruban. */
+data class Lamp(val channel: Int, val name: String, val x: Float, val y: Float, val strip: Boolean)
 class HueException(msg: String) : Exception(msg)
+
+/** Message à afficher : celui du pont s'il en donne un, sinon le cas courant d'un pont hors de portée. */
+fun messageErreur(e: Throwable): String = when (e) {
+    is HueException -> e.message ?: "Erreur du pont"
+    is java.io.IOException -> "Pont injoignable : il faut être sur le Wi-Fi de l'appart."
+    else -> e.message ?: e.javaClass.simpleName
+}
 
 /** Appels REST au pont. Il présente un certificat à lui : on ne le vérifie pas, on ne parle qu'à son adresse locale. */
 class HueBridge(private val ip: String) {
@@ -123,6 +132,27 @@ class HueBridge(private val ip: String) {
             owner in roomDevices && owner !in zoneDevices
         }.map { it.getString("id") }
         return RoomInfo(room.getString("id"), others)
+    }
+
+    /** Lampes de la zone avec le nom de leur appareil (celui de l'app Hue) ; « Lampe N » si le pont ne le donne pas. */
+    fun lamps(username: String, area: EntArea): List<Lamp> {
+        val fallback = area.channels.mapIndexed { i, c -> Lamp(c.id, "Lampe ${i + 1}", c.x, c.y, false) }
+        val cfg = list("entertainment_configuration/${area.id}", username).firstOrNull() ?: return fallback
+        val owners = list("entertainment", username).associate { it.getString("id") to it.getJSONObject("owner").getString("rid") }
+        val devices = list("device", username).associateBy { it.getString("id") }
+        val chs = cfg.optJSONArray("channels") ?: JSONArray()
+        val info = HashMap<Int, Pair<String, Boolean>>()
+        for (i in 0 until chs.length()) {
+            val ch = chs.getJSONObject(i)
+            val mem = ch.optJSONArray("members") ?: continue
+            if (mem.length() == 0) continue
+            val dev = owners[mem.getJSONObject(0).getJSONObject("service").getString("rid")]?.let { devices[it] } ?: continue
+            val name = dev.optJSONObject("metadata")?.optString("name").orEmpty()
+            val type = dev.optJSONObject("product_data")?.optString("product_archetype").orEmpty() + " " +
+                dev.optJSONObject("metadata")?.optString("archetype").orEmpty()
+            info[ch.getInt("channel_id")] = name to type.contains("strip")
+        }
+        return fallback.map { l -> info[l.channel]?.let { (n, s) -> l.copy(name = n.ifBlank { l.name }, strip = s) } ?: l }
     }
 
     fun fadeOff(username: String, lights: List<String>, ms: Int) {

@@ -84,6 +84,18 @@ class Effects(channels: List<Channel>) {
         private set
     @Volatile var excitement = 0f
         private set
+    /** Durée du dernier stroboscope en secondes, 0 tant qu'il n'y en a pas eu. */
+    @Volatile var lastStrobeLength = 0.0
+        private set
+
+    // Pour l'écran, lus sur le fil de la boucle juste après frame().
+    /** Temps dans la mesure, de 1 à 4. */
+    val beatInBar: Int get() = (beats % 4L).toInt() + 1
+    /** Mesure dans la phrase de 8 : la figure change à la fin de la huitième. */
+    val barInPhrase: Int get() = (barsSinceFigure + 1).coerceIn(1, 8)
+    /** Couleurs principale et secondaire du moment, celles que jouent les lampes. */
+    val lead: FloatArray get() = curP
+    val second: FloatArray get() = curA
 
     private var lastTime = 0.0
     private var beats = 0L
@@ -284,6 +296,7 @@ class Effects(channels: List<Channel>) {
         if (test || (strobe > 0f && now - lastStrobe > 10.0)) {
             strobeUntil = now + if (test) 3.0 else 2.5 + 1.5 * energy.coerceIn(0f, 1f)
             lastStrobe = now
+            lastStrobeLength = strobeUntil - now
             dropAt = strobeUntil
         }
         pickFigure(mood, 1f)

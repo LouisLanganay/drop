@@ -27,6 +27,24 @@ data class LiveState(
     val beat: Long = 0,
     val drops: Int = 0,
     val error: String? = null,
+    /** Temps dans la mesure (1 à 4) et mesure dans la phrase de 8. */
+    val beatInBar: Int = 0,
+    val barInPhrase: Int = 0,
+    /** Montée en cours, de 0 à 1. */
+    val tension: Float = 0f,
+    /** Couleurs principale et secondaire du moment (ARGB), 0 à l'arrêt. */
+    val lead: Int = 0,
+    val second: Int = 0,
+    /** Ce que joue chaque lampe, canal → couleur ARGB (luminosité comprise). */
+    val lamps: Map<Int, Int> = emptyMap(),
+    /** Durée du dernier stroboscope, en secondes. */
+    val lastStrobe: Float = 0f,
+)
+
+private fun argb(c: FloatArray): Int = android.graphics.Color.rgb(
+    (c[0].coerceIn(0f, 1f) * 255).toInt(),
+    (c[1].coerceIn(0f, 1f) * 255).toInt(),
+    (c[2].coerceIn(0f, 1f) * 255).toInt(),
 )
 
 /**
@@ -131,7 +149,8 @@ class DropService : Service() {
             while (running) {
                 val t0 = System.nanoTime()
                 val snap = analyzer.snapshot
-                s.send(effects.frame(analyzer.now(), snap))
+                val out = effects.frame(analyzer.now(), snap)
+                s.send(out)
                 tick++
                 if (strobeTest) {
                     strobeTest = false
@@ -145,6 +164,9 @@ class DropService : Service() {
                         running = true, status = "Synchro en cours", area = area.name, bpm = snap.bpm,
                         level = snap.level, mode = effects.mode, figure = effects.figureLabel,
                         mood = (NowPlaying.track.value?.genre ?: snap.mood.label), beat = beats, drops = drops,
+                        beatInBar = effects.beatInBar, barInPhrase = effects.barInPhrase, tension = snap.buildup,
+                        lead = argb(effects.lead), second = argb(effects.second),
+                        lamps = out.mapValues { argb(it.value) }, lastStrobe = effects.lastStrobeLength.toFloat(),
                     )
                 }
                 val spent = (System.nanoTime() - t0) / 1_000_000
@@ -153,7 +175,7 @@ class DropService : Service() {
             live.value = live.value.copy(running = false, status = "Arrêté")
         } catch (e: Exception) {
             Log.e(TAG, "arrêt sur erreur", e)
-            live.value = LiveState(running = false, status = "Erreur", error = e.message ?: e.javaClass.simpleName)
+            live.value = LiveState(running = false, status = "Erreur", error = messageErreur(e))
         } finally {
             audio?.stop()
             stream?.close()
@@ -187,12 +209,12 @@ class DropService : Service() {
         val stopIntent = PendingIntent.getService(this, 0, Intent(this, DropService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "drop")
-            .setSmallIcon(R.drawable.ic_drop)
+            .setSmallIcon(R.drawable.ic_drop_notif)
             .setContentTitle("Drop")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
-            .addAction(Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_drop), "Arrêter", stopIntent).build())
+            .addAction(Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_drop_notif), "Arrêter", stopIntent).build())
             .build()
     }
 
