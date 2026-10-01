@@ -60,9 +60,11 @@ class Snapshot(
  * la grosse caisse et jamais la caisse claire, et la phrase de 8 mesures repart d'un drop, d'un
  * nouveau morceau ou d'un changement net de section.
  *
- * Un drop, c'est un bloc de basses qui arrive au moins 6 dB au-dessus des deux mesures d'avant (ou juste après
- * une montée coupée par un trou), au niveau des passages forts du morceau, et qui tient deux temps. Le niveau
- * des passages forts est le 80e centile des temps de la dernière minute : un coup isolé ne le fausse pas.
+ * Un drop, c'est un bloc de basses qui arrive au moins 5 dB au-dessus de l'énergie des quatre mesures d'avant
+ * (ou juste après une montée coupée par un trou), au niveau des passages forts du morceau, et qui tient toute
+ * sa première mesure : un coup de basse de deux ou trois temps avant le vrai drop n'en est pas un. Une coupure d'une ou deux mesures dans un groove n'en est pas un : les mesures pleines d'avant la
+ * coupure gardent l'énergie haute. Le niveau des passages forts est le 80e centile des temps de la dernière
+ * minute : un coup isolé ne le fausse pas.
  */
 class Analyzer(private val sampleRate: Int, private val hop: Int, private val emit: (AudioEvent) -> Unit) {
     private val n = 2048
@@ -331,13 +333,13 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         buildup = if (building) min(1f, buildup + dt / 4f) else max(0f, buildup - dt / 1.5f)
         buildupPeak = max(buildup, buildupPeak - dt / 4f)
 
-        // Drop, en deux temps. Les basses reviennent au niveau des passages forts après deux mesures pauvres en
-        // basses (ou après une montée coupée d'un trou) : l'explosion part tout de suite. Elles tiennent les deux
-        // premiers temps : c'est confirmé à la fermeture du deuxième, le stroboscope part et la phrase repart du drop.
+        // Drop, en deux temps. Les basses reviennent au niveau des passages forts, nettement au-dessus des quatre
+        // mesures d'avant (ou après une montée coupée d'un trou) : l'explosion part tout de suite. Elles tiennent
+        // toute la première mesure : c'est confirmé, le stroboscope part sur la deuxième et la phrase repart du drop.
         bassMid += (bass - bassMid) * min(1f, dt / 0.4f)
-        if (candidateAt >= 0 && t - candidateAt > 4.0) cancelDrop(t, "le tempo s'est perdu")
-        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastDrop > 15.0 && t - lastCancel > 8.0 &&
-            db(bassMid) >= loudBass - 4f && (db(bassMid) >= lowLevel + 6f || (buildupPeak > 0.5f && lastBeatLow))
+        if (candidateAt >= 0 && t - candidateAt > 6.0) cancelDrop(t, "le tempo s'est perdu")
+        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastDrop > 15.0 && t - lastCancel > 0.5 &&
+            db(bassMid) >= loudBass - 6f && (db(bassMid) >= lowLevel + 5f || (buildupPeak > 0.5f && lastBeatLow))
         ) {
             // Le retour des basses a précédé d'environ 0,15 s le franchissement du seuil : temps le plus proche de ce retour.
             val back = t - 0.15
@@ -345,7 +347,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             candidateAt = back
             candidateBeat = if (abs(next - back) < abs(lastBeatEmitted - back)) beatIndex + 1 else beatIndex
             candidateLow = lowLevel
-            Log.i(TAG, "drop possible à ${"%.1f".format(back)} s (+${"%.1f".format(db(bassMid) - lowLevel)} dB sur les deux mesures d'avant, montée ${"%.2f".format(buildupPeak)})")
+            Log.i(TAG, "drop possible à ${"%.1f".format(back)} s (+${"%.1f".format(db(bassMid) - lowLevel)} dB sur les quatre mesures d'avant, montée ${"%.2f".format(buildupPeak)})")
             Recorder.event(back, "drop_start", "low=${"%.1f".format(lowLevel)} ref=${"%.1f".format(loudBass)}")
             emit(AudioEvent.DropStart)
         }
@@ -583,7 +585,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         sumFull = 0.0; sumBass = 0.0; sumHigh = 0.0; sumN = 0
         if (beatFeat.size > 12) beatFeat.removeFirst()
         updateBassContext(bassDb)
-        if (candidateAt >= 0 && raw >= candidateBeat + 1) settleDrop()
+        if (candidateAt >= 0 && raw >= candidateBeat + 3) settleDrop()
         if (beatFeat.size < 12) return
         var chg = 0f
         for (band in 0..2) {
@@ -603,39 +605,46 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
 
     private fun db(v: Float) = 10f * kotlin.math.log10(v + 1e-12f)
 
-    /** Basses du temps qui vient de se fermer : niveau des passages forts, et moyenne des deux dernières mesures. */
+    /** Basses du temps qui vient de se fermer : niveau des passages forts, et énergie des quatre dernières mesures. */
     private fun updateBassContext(bassDb: Float) {
         bassBeats.addLast(bassDb)
         if (bassBeats.size > 140) bassBeats.removeFirst()
         if (bassBeats.size < 16) return
         val sorted = bassBeats.sorted()
         loudBass = sorted[(sorted.size * 0.8f).toInt().coerceAtMost(sorted.size - 1)]
-        var sum = 0f
-        for (i in bassBeats.size - 8 until bassBeats.size) sum += bassBeats[i]
-        lowLevel = sum / 8f
+        // Énergie moyenne (en puissance, pas en dB : une mesure creuse ne fait pas oublier trois mesures pleines).
+        var sum = 0.0
+        for (i in bassBeats.size - 16 until bassBeats.size) sum += Math.pow(10.0, bassBeats[i] / 10.0)
+        lowLevel = (10.0 * kotlin.math.log10(sum / 16.0 + 1e-12)).toFloat()
         lastBeatLow = bassDb <= loudBass - 6f
     }
 
-    /** Les deux premiers temps du drop possible sont fermés : il tient (confirmé) ou non (annulé). */
+    /**
+     * La première mesure du drop possible est fermée. Il tient si son niveau (moyenne en dB des quatre temps : un
+     * coup isolé ne la tire pas) reste proche des passages forts, au moins 5 dB au-dessus de l'énergie des quatre
+     * mesures d'avant, sans temps qui s'effondre (le trou qui suit un coup de basse annonçant le drop). Réglé sur
+     * les enregistrements du 01/10 (« Lunettes », « Charger »).
+     */
     private fun settleDrop() {
         val t = frame / fps.toDouble()
-        val a = beatFeat.firstOrNull { it.first == candidateBeat }?.second?.get(1)
-        val b = beatFeat.firstOrNull { it.first == candidateBeat + 1 }?.second?.get(1)
-        if (a == null || b == null) { cancelDrop(t, "temps manquants"); return }
-        val level = (a + b) / 2f
+        val vals = (0..3).map { i -> beatFeat.firstOrNull { it.first == candidateBeat + i }?.second?.get(1) }
+        if (vals.any { it == null }) { cancelDrop(t, "temps manquants"); return }
+        val v = vals.filterNotNull()
+        val level = v.average().toFloat()
+        val weakest = v.min()
         val rise = level - candidateLow
-        if (level >= loudBass - 3f && rise >= 6f) {
+        if (level >= loudBass - 6f && rise >= 5f && weakest >= max(loudBass - 12f, level - 12f)) {
             lastDrop = t
             buildup = 0f
             buildupPeak = 0f
-            Log.i(TAG, "DROP confirmé à ${"%.1f".format(candidateAt)} s (+${"%.1f".format(rise)} dB sur les deux mesures d'avant, ${"%.1f".format(loudBass - level)} dB sous la référence)")
+            Log.i(TAG, "DROP confirmé à ${"%.1f".format(candidateAt)} s (+${"%.1f".format(rise)} dB sur les quatre mesures d'avant, ${"%+.1f".format(level - loudBass)} dB par rapport aux passages forts)")
             Recorder.event(candidateAt, "drop", "rise=${"%.1f".format(rise)} level=${"%.1f".format(level)} ref=${"%.1f".format(loudBass)}")
             Timeline.mark(candidateAt, Timeline.Kind.DROP, "Drop · +${"%.0f".format(rise)} dB")
             realign(candidateBeat, "drop")
             candidateAt = -1.0
             emit(AudioEvent.Drop)
         } else {
-            cancelDrop(t, "+${"%.1f".format(rise)} dB, ${"%.1f".format(loudBass - level)} dB sous la référence")
+            cancelDrop(t, "+${"%.1f".format(rise)} dB sur les quatre mesures d'avant, ${"%+.1f".format(level - loudBass)} dB par rapport aux passages forts, temps le plus faible ${"%+.1f".format(weakest - loudBass)} dB")
         }
     }
 
