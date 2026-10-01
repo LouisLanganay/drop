@@ -6,3 +6,4 @@ keystore/
 *.apk
 .idea/
 *.iml
+__pycache__/

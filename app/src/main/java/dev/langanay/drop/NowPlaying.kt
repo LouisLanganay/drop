@@ -34,6 +34,8 @@ data class Track(
     val colors: List<FloatArray>,
     val genre: String? = null,
     val mood: Mood? = null,
+    /** Durée du morceau en ms, 0 si le lecteur ne la donne pas. */
+    val durationMs: Long = 0L,
 )
 
 /**
@@ -99,7 +101,8 @@ object NowPlaying {
         val same = cur != null && cur.title == title && cur.artist == artist
         if (same && (cur!!.art != null || art == null)) return
         val colors = art?.let { coverColors(it) } ?: emptyList()
-        track.value = Track(title, artist, art, colors, if (same) cur!!.genre else null, if (same) cur!!.mood else null)
+        val duration = md.getLong(MediaMetadata.METADATA_KEY_DURATION).coerceAtLeast(0L)
+        track.value = Track(title, artist, art, colors, if (same) cur!!.genre else null, if (same) cur!!.mood else null, duration)
         Log.i(TAG, "morceau : $artist, $title (${colors.size} couleurs de pochette)")
         if (same && cur!!.genre != null) return
         val key = "$artist|$title"

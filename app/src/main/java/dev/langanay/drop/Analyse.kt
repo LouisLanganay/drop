@@ -129,6 +129,7 @@ internal fun AnalyseScreen(lamps: List<Lamp>, onBack: () -> Unit) {
             Fenetres(fenetre) { fenetre = it }
         }
         Resume(state, accent)
+        MemoireMorceau()
         Canvas(
             Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(Plan)
                 .border(1.dp, Ligne, RoundedCornerShape(16.dp))
@@ -183,6 +184,35 @@ private fun Fenetres(fenetre: Double, onChange: (Double) -> Unit) {
                     .selectable(selected = choisi, role = Role.RadioButton) { onChange(v) }.padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(nom, style = corps(13, FontWeight.Medium, color = if (choisi) Texte else Secondaire)) }
+        }
+    }
+}
+
+/** Ce que Drop sait du morceau en cours : ses drops mémorisés, avec « Oublier », ou qu'il ne le connaît pas encore. */
+@Composable
+private fun MemoireMorceau() {
+    val ctx = LocalContext.current
+    val track by NowPlaying.track.collectAsState()
+    val v by TrackMemory.version.collectAsState()
+    val t = track ?: return
+    val key = remember(t.artist, t.title) { TrackMemory.key(t.artist, t.title) }
+    val drops = remember(key, v) { TrackMemory.drops(key) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            when {
+                drops == null -> "Morceau pas encore connu : il le sera après une écoute en entier."
+                drops.isEmpty() -> "Morceau connu, sans drop."
+                else -> "Morceau connu : drop${if (drops.size > 1) "s" else ""} à ${drops.joinToString(", ") { "${it.toInt() / 60}:${"%02d".format(it.toInt() % 60)}" }}."
+            },
+            Modifier.weight(1f), style = corps(13, color = Secondaire), maxLines = 2, overflow = TextOverflow.Ellipsis,
+        )
+        if (drops != null) {
+            Box(
+                Modifier.height(36.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, Repere, RoundedCornerShape(10.dp))
+                    .clickable(role = Role.Button, onClickLabel = "Oublier ce morceau") { TrackMemory.forget(ctx, key) }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Oublier", style = corps(13, FontWeight.Medium)) }
         }
     }
 }

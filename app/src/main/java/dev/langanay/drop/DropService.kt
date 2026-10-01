@@ -66,6 +66,9 @@ class DropService : Service() {
     }
 
     @Volatile private var running = false
+    /** Session en cours d'envoi au serveur (null si l'envoi est coupé) et rang de la prochaine tranche. */
+    private var sessionId: String? = null
+    private var sessionSeq = 0
     private var worker: Thread? = null
     private var wake: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
@@ -123,12 +126,30 @@ class DropService : Service() {
             val effects = Effects(area.channels)
             Timeline.reset(area.channels.map { it.id })
             Recorder.reset()
+            // Envoi de la session au serveur (page Réglages), par tranches de 30 s.
+            val upload = p.uploadEnabled
+            sessionId = if (upload) java.util.UUID.randomUUID().toString().replace("-", "") else null
+            sessionSeq = 0
+            if (upload) {
+                Recorder.startStreaming(linkedMapOf(
+                    "started_at" to System.currentTimeMillis().toString(),
+                    "app" to "Drop ${runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"}",
+                    "device" to android.os.Build.MODEL,
+                    "zone" to area.name,
+                ))
+                Uploader.kick(this)
+            }
+            TrackMemory.load(this)
+            TrackMemory.sync(this)
             var drops = 0
             val analyzer = Analyzer(48000, 512) { ev ->
                 effects.post(ev)
                 if (ev == AudioEvent.Drop) drops++
             }
             var trackKey: String? = null
+            var memKey: String? = null
+            var memVersion = -1L
+            var prefsTick = 0
             fun applyPrefs() {
                 // Réglages fixes, choisis pour que tout soit juste sans rien toucher ; le volume de la
                 // pièce est suivi automatiquement par l'analyse.
@@ -146,11 +167,26 @@ class DropService : Service() {
                 if (key != null && key != trackKey) {
                     if (trackKey != null) analyzer.newTrack()
                     trackKey = key
-                    Timeline.mark(analyzer.now(), Timeline.Kind.TRACK, tr.title)
-                    Recorder.event(analyzer.now(), "title", "${tr.artist} - ${tr.title}")
+                    memKey = TrackMemory.key(tr.artist, tr.title)
+                    memVersion = -1L
+                    val now = analyzer.now()
+                    Timeline.mark(now, Timeline.Kind.TRACK, tr.title)
+                    Recorder.event(now, "title", "${tr.artist} - ${tr.title}")
+                    Recorder.event(now, "track_key", memKey!!)
+                    if (tr.durationMs > 0) Recorder.event(now, "dur", "%.1f".format(java.util.Locale.US, tr.durationMs / 1000.0))
                 }
-                // Position de lecture : les mesures se comptent depuis le début du morceau.
-                if (key != null) NowPlaying.positionSec()?.let { analyzer.trackPosition(it, key) }
+                // Mémoire du morceau (rechargée quand elle change) : ses drops connus, ou rien s'il est inconnu.
+                val v = TrackMemory.version.value
+                if (memKey != null && v != memVersion) {
+                    memVersion = v
+                    analyzer.setMemory(memKey!!, TrackMemory.drops(memKey))
+                }
+                // Position de lecture : les mesures se comptent depuis le début du morceau, et elle sert à la mémoire.
+                if (key != null) NowPlaying.positionSec()?.let { pos ->
+                    analyzer.trackPosition(pos, key)
+                    if (prefsTick % 4 == 0) Recorder.event(analyzer.now(), "pos", "%.2f".format(java.util.Locale.US, pos))
+                }
+                prefsTick++
             }
             applyPrefs()
             audio = AudioEngine { analyzer.process(it) }.also { it.start(this) }
@@ -171,6 +207,7 @@ class DropService : Service() {
                     effects.testDrop()
                 }
                 if (tick % 25L == 0L) applyPrefs()
+                if (upload && tick % 1500L == 0L) sessionId?.let { Uploader.enqueue(this, it, sessionSeq++, Recorder.takePending()) }
                 if (tick % 100L == 0L) Log.i(TAG, "show ${effects.mode} ${effects.figureLabel} excitation ${"%.2f".format(effects.excitement)}")
                 if (tick % 5L == 0L) {
                     beats++
@@ -192,6 +229,15 @@ class DropService : Service() {
             live.value = LiveState(running = false, status = "Erreur", error = messageErreur(e))
         } finally {
             audio?.stop()
+            // Dernière tranche et fin de session : le serveur analyse les morceaux entendus en entier.
+            runCatching {
+                sessionId?.let {
+                    Uploader.enqueue(this, it, sessionSeq++, Recorder.takePending())
+                    Uploader.enqueueEnd(this, it)
+                }
+                sessionId = null
+                Recorder.stopStreaming()
+            }
             // L'enregistrement des 5 dernières minutes, pour régler la détection hors ligne.
             runCatching { Recorder.save(this)?.let { Log.i(TAG, "enregistrement : ${it.name}") } }
             stream?.close()

@@ -66,5 +66,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("strobeon", true)
         set(v) = sp.edit().putBoolean("strobeon", v).apply()
 
+    /** Envoi des sessions au serveur de Drop pour améliorer la détection (page Réglages). */
+    var uploadEnabled: Boolean
+        get() = sp.getBoolean("upload", true)
+        set(v) = sp.edit().putBoolean("upload", v).apply()
+
     val paired: Boolean get() = !username.isNullOrBlank() && !clientKey.isNullOrBlank()
 }

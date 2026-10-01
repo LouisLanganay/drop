@@ -143,6 +143,15 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private var candidateBeat = 0L
     private var candidateLow = 0f
     private var lastCancel = -100.0
+    // Mémoire du morceau en cours : positions (en s dans le morceau) de ses vrais drops, null s'il est inconnu.
+    @Volatile private var memory: DoubleArray? = null
+    @Volatile private var memReset = false
+    private val memUsed = HashSet<Double>()
+    private val memMissed = HashSet<Double>()
+    private var memAbove = false
+    private var lastMemSkip = -100.0
+    /** Position dans le morceau moins l'horloge audio, NaN tant que le lecteur ne l'a pas donnée pour ce morceau. */
+    private var posOffset = Double.NaN
     /** Niveau de la première mesure du dernier drop : un retour nettement plus fort passe malgré l'écart de 15 s. */
     private var lastDropLevel = -999f
 
@@ -186,6 +195,16 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
 
     /** Nouveau morceau : le prochain temps franc devient le début d'une phrase. */
     fun newTrack() { trackChanged = true }
+
+    /**
+     * Mémoire du morceau [key] : les positions de ses vrais drops, ou null s'il n'a jamais été entendu en entier.
+     * Un morceau connu ne joue un drop qu'à une position mémorisée, quand les basses y arrivent vraiment.
+     */
+    fun setMemory(key: String, drops: List<Double>?) {
+        memory = drops?.sorted()?.toDoubleArray()
+        memReset = true
+        Recorder.event(now(), "memory", if (drops == null) "inconnu" else drops.joinToString(" ") { "%.2f".format(java.util.Locale.US, it) })
+    }
 
     /** Position de lecture du morceau [key], en secondes, à l'instant de l'appel. */
     fun trackPosition(sec: Double, key: String) {
@@ -253,6 +272,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             // Le niveau des passages forts reste celui de la dernière minute, morceau d'avant compris : au début d'un
             // morceau, l'intro seule ne dit pas où sera le drop, et une montée d'énergie passerait pour un drop.
             Recorder.event(t, "track")
+            posOffset = Double.NaN
         }
         histT[histPos] = t - dt
         histB[histPos] = if (silent) 0f else bassFlux
@@ -340,10 +360,43 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         // toute la première mesure : c'est confirmé, le stroboscope part sur la deuxième et la phrase repart du drop.
         bassMid += (bass - bassMid) * min(1f, dt / 0.4f)
         if (candidateAt >= 0 && t - candidateAt > 6.0) cancelDrop(t, "le tempo s'est perdu")
-        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastCancel > 0.5 &&
+        val mem = memory
+        if (memReset) { memReset = false; memUsed.clear(); memMissed.clear(); memAbove = false }
+        val tp = if (posOffset.isNaN()) Double.NaN else t + posOffset
+        val wouldStart = candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastCancel > 0.5 &&
             (t - lastDrop > 15.0 || db(bassMid) >= lastDropLevel + 6f) &&
             db(bassMid) >= loudBass - 4f && (db(bassMid) >= lowLevel + 6f || (buildupPeak > 0.5f && lastBeatLow))
-        ) {
+        if (mem != null && !tp.isNaN()) {
+            // Morceau connu : un drop n'est joué qu'à une position mémorisée (de 1 s avant à 1,5 s après), quand les
+            // basses y arrivent au niveau des passages forts. Il part tout de suite, stroboscope compris : la mémoire
+            // a déjà confirmé que c'est un drop. Ailleurs dans le morceau, pas de drop.
+            val above = !silent && (loudBass.isNaN() || db(bassMid) >= loudBass - 4f)
+            val rising = above && !memAbove
+            memAbove = above
+            var inAnyWindow = false
+            for (p in mem) {
+                if (p in memUsed || p in memMissed) continue
+                if (tp > p + 1.5) {
+                    memMissed += p
+                    Log.i(TAG, "drop mémorisé à ${"%.1f".format(p)} s du morceau pas entendu")
+                    Recorder.event(t, "mem_miss", "pos=${"%.2f".format(java.util.Locale.US, p)}")
+                    Timeline.mark(t, Timeline.Kind.NOT_DROP, "Mémoire : pas entendu")
+                    continue
+                }
+                if (tp < p - 1.0) continue
+                inAnyWindow = true
+                if (candidateAt < 0 && (rising || (tp >= p && above))) {
+                    memUsed += p
+                    memoryDrop(t, p, tp)
+                    break
+                }
+            }
+            if (wouldStart && !inAnyWindow && t - lastMemSkip > 8.0) {
+                lastMemSkip = t
+                Log.i(TAG, "retour des basses hors mémoire à ${"%.1f".format(tp)} s du morceau, ignoré")
+                Recorder.event(t - 0.15, "mem_skip", "pos=${"%.2f".format(java.util.Locale.US, tp - 0.15)}")
+            }
+        } else if (wouldStart) {
             // Le retour des basses a précédé d'environ 0,15 s le franchissement du seuil : temps le plus proche de ce retour.
             val back = t - 0.15
             val next = lastBeatEmitted + 60.0 / bpm
@@ -543,7 +596,14 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         val seek = key == posAlignedKey && lastPos >= 0 && abs(pos - (lastPos + (at - lastPosAt))) > 1.5
         lastPos = pos
         lastPosAt = at
-        if (seek) { posAlignedKey = null; Log.i(TAG, "saut dans le morceau à ${"%.0f".format(pos)} s") }
+        posOffset = pos - at
+        if (seek) {
+            posAlignedKey = null
+            memUsed.clear()
+            memMissed.clear()
+            Log.i(TAG, "saut dans le morceau à ${"%.0f".format(pos)} s")
+            Recorder.event(at, "seek", "%.2f".format(java.util.Locale.US, pos))
+        }
         if (key == posAlignedKey || beatTime < 0 || conf < 0.2f || pos < 8.0 || pos > 60.0) return
         val period = 60.0 / bpm
         // Position dans le morceau du dernier temps émis, en comptant ~0,1 s de latence entre le haut-parleur et l'analyse.
@@ -651,6 +711,22 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         } else {
             cancelDrop(t, "+${"%.1f".format(rise)} dB sur les quatre mesures d'avant, ${"%+.1f".format(level - loudBass)} dB par rapport aux passages forts, temps le plus faible ${"%+.1f".format(weakest - loudBass)} dB")
         }
+    }
+
+    /** Drop d'un morceau connu, à une position mémorisée confirmée par le son : explosion et stroboscope ensemble. */
+    private fun memoryDrop(t: Double, p: Double, tp: Double) {
+        lastDrop = t
+        lastDropLevel = db(bassMid)
+        buildup = 0f
+        buildupPeak = 0f
+        val back = t - 0.1
+        val next = lastBeatEmitted + 60.0 / bpm
+        Log.i(TAG, "DROP mémorisé (${"%.1f".format(p)} s du morceau), entendu à ${"%.1f".format(tp)} s")
+        Recorder.event(back, "mem_drop", "pos=${"%.2f".format(java.util.Locale.US, p)} heard=${"%.2f".format(java.util.Locale.US, tp)}")
+        Timeline.mark(back, Timeline.Kind.DROP, "Drop mémorisé")
+        realign(if (abs(next - back) < abs(lastBeatEmitted - back)) beatIndex + 1 else beatIndex, "drop mémorisé")
+        emit(AudioEvent.DropStart)
+        emit(AudioEvent.Drop)
     }
 
     private fun cancelDrop(t: Double, why: String) {

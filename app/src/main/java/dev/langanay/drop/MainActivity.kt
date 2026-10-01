@@ -189,6 +189,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
+        // Envois restés en attente (show arrêté hors réseau) et mémoire des morceaux à jour.
+        Uploader.kick(this)
+        TrackMemory.load(this)
+        TrackMemory.sync(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = Fond, surface = Surface, primary = Texte, onPrimary = Fond)) {
                 Box(Modifier.fillMaxSize().background(Fond).systemBarsPadding()) {
@@ -216,6 +220,7 @@ class MainActivity : ComponentActivity() {
         var lamps by remember { mutableStateOf<List<Lamp>>(emptyList()) }
         var bridgeErr by remember { mutableStateOf<String?>(null) }
         var analyse by remember { mutableStateOf(false) }
+        var reglages by remember { mutableStateOf(false) }
 
         val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { micOk = micAccorde() }
         LaunchedEffect(Unit) {
@@ -269,8 +274,10 @@ class MainActivity : ComponentActivity() {
             ) { setup = false }
         } else if (analyse) {
             AnalyseScreen(lamps) { analyse = false }
+        } else if (reglages) {
+            ReglagesScreen(prefs) { reglages = false }
         } else {
-            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr, onAnalyse = { analyse = true }) {
+            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr, onAnalyse = { analyse = true }, onReglages = { reglages = true }) {
                 DropService.stop(ctx)
                 prefs.username = null
                 prefs.clientKey = null
@@ -369,7 +376,8 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun ShowScreen(
         prefs: Prefs, areas: List<EntArea>, zoneId: String?, onZone: (String) -> Unit,
-        lamps: List<Lamp>, morceauOk: Boolean, bridgeErr: String?, onAnalyse: () -> Unit, onUnpair: () -> Unit,
+        lamps: List<Lamp>, morceauOk: Boolean, bridgeErr: String?, onAnalyse: () -> Unit, onReglages: () -> Unit,
+        onUnpair: () -> Unit,
     ) {
         val ctx = this@MainActivity
         val state by DropService.live.collectAsState()
@@ -384,7 +392,9 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo()
                 Spacer(Modifier.weight(1f))
-                BoutonAnalyse(onAnalyse)
+                BoutonIcone(Curseurs, "Réglages", onReglages)
+                Spacer(Modifier.width(8.dp))
+                BoutonIcone(Courbe, "Analyse en direct", onAnalyse)
                 Spacer(Modifier.width(8.dp))
                 if (running) EnDirect(state.area.ifEmpty { area?.name.orEmpty() }, accent, state.beatInBar)
                 else BoutonZone(area) { sheet = true }
@@ -472,14 +482,14 @@ private fun BoutonZone(area: EntArea?, onClick: () -> Unit) {
     }
 }
 
-/** Ouvre l'analyse en direct : la musique, ce que Drop en comprend et ce que jouent les lampes. */
+/** Bouton carré de l'en-tête : réglages, analyse en direct. */
 @Composable
-private fun BoutonAnalyse(onClick: () -> Unit) {
+private fun BoutonIcone(icone: ImageVector, nom: String, onClick: () -> Unit) {
     Box(
         Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Ligne2, RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button, onClickLabel = "Ouvrir l'analyse en direct", onClick = onClick),
+            .clickable(role = Role.Button, onClickLabel = nom, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(Courbe, contentDescription = "Analyse en direct", tint = Texte, modifier = Modifier.size(20.dp)) }
+    ) { Icon(icone, contentDescription = nom, tint = Texte, modifier = Modifier.size(20.dp)) }
 }
 
 /** Pastille « En direct », dont le point bat les temps. */
