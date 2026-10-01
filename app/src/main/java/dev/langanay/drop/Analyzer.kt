@@ -143,6 +143,8 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
     private var candidateBeat = 0L
     private var candidateLow = 0f
     private var lastCancel = -100.0
+    /** Niveau de la première mesure du dernier drop : un retour nettement plus fort passe malgré l'écart de 15 s. */
+    private var lastDropLevel = -999f
 
     // Mesures et phrases : le temps numéro « anchor » est le premier temps de la première mesure d'une phrase.
     private var anchor = 1L
@@ -248,8 +250,8 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
             for (i in 0..3) { kickAcc[i] *= 0.3f; snareAcc[i] *= 0.3f }
             beatFeat.clear()
             changes.clear()
-            bassBeats.clear()
-            loudBass = Float.NaN
+            // Le niveau des passages forts reste celui de la dernière minute, morceau d'avant compris : au début d'un
+            // morceau, l'intro seule ne dit pas où sera le drop, et une montée d'énergie passerait pour un drop.
             Recorder.event(t, "track")
         }
         histT[histPos] = t - dt
@@ -338,7 +340,8 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         // toute la première mesure : c'est confirmé, le stroboscope part sur la deuxième et la phrase repart du drop.
         bassMid += (bass - bassMid) * min(1f, dt / 0.4f)
         if (candidateAt >= 0 && t - candidateAt > 6.0) cancelDrop(t, "le tempo s'est perdu")
-        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastDrop > 15.0 && t - lastCancel > 0.5 &&
+        if (candidateAt < 0 && !silent && !loudBass.isNaN() && t > 3.0 && t - lastCancel > 0.5 &&
+            (t - lastDrop > 15.0 || db(bassMid) >= lastDropLevel + 6f) &&
             db(bassMid) >= loudBass - 4f && (db(bassMid) >= lowLevel + 6f || (buildupPeak > 0.5f && lastBeatLow))
         ) {
             // Le retour des basses a précédé d'environ 0,15 s le franchissement du seuil : temps le plus proche de ce retour.
@@ -636,6 +639,7 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
         val rise = level - candidateLow
         if (level >= loudBass - 3f && rise >= 6f && weakest >= max(loudBass - 12f, level - 12f)) {
             lastDrop = t
+            lastDropLevel = level
             buildup = 0f
             buildupPeak = 0f
             Log.i(TAG, "DROP confirmé à ${"%.1f".format(candidateAt)} s (+${"%.1f".format(rise)} dB sur les quatre mesures d'avant, ${"%+.1f".format(level - loudBass)} dB par rapport aux passages forts)")
