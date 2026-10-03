@@ -107,7 +107,7 @@ class Effects(channels: List<Channel>) {
     private var beatAt = -10.0
     private var kickAt = -10.0
     private var dropAt = -100.0
-    /** Montée en cours : son début, la fin du noir (début de mesure), et son style (une sur deux : noir puis montée). */
+    /** Montée en cours : son début, la fin du noir (début de mesure), et son style (une sur deux, la première : noir puis montée). */
     private var riseAt = -100.0
     private var riseBlackUntil = -100.0
     private var rises = 0
@@ -228,7 +228,7 @@ class Effects(channels: List<Channel>) {
             riseBlackUntil = fin
         }
         lastMode = mode
-        val noirMontee = rises % 2 == 0
+        val noirMontee = rises % 2 == 1
         figureLabel = when (mode) {
             "Groove", "Énergie" -> figure.label
             "DROP" -> "Explosion"
