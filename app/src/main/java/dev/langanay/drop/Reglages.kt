@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -83,7 +84,7 @@ internal fun ReglagesScreen(prefs: Prefs, onBack: () -> Unit) {
     ) {
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = "Revenir au show", onClick = onBack),
+                Modifier.size(44.dp).verre(22.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Revenir au show", onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) { Icon(Retour, contentDescription = "Retour", tint = Texte, modifier = Modifier.size(22.dp)) }
             Text("Réglages", Modifier.padding(start = 2.dp), style = corps(19, FontWeight.SemiBold).copy(letterSpacing = (-0.4).sp))
@@ -142,8 +143,7 @@ internal fun ReglagesScreen(prefs: Prefs, onBack: () -> Unit) {
 @Composable
 private fun Carte(titre: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface).border(1.dp, Ligne, RoundedCornerShape(16.dp))
-            .padding(16.dp),
+        Modifier.fillMaxWidth().verre(22.dp, lentille = false).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(titre.uppercase(), style = Etiquette.copy(color = Tertiaire))
@@ -154,7 +154,7 @@ private fun Carte(titre: String, content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun Bouton(label: String, onClick: () -> Unit) {
     Box(
-        Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Repere, RoundedCornerShape(12.dp))
+        Modifier.height(44.dp).verre(22.dp).clip(RoundedCornerShape(22.dp))
             .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) { Text(label, style = corps(14, FontWeight.Medium)) }

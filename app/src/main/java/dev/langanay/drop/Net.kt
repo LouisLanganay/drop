@@ -177,7 +177,7 @@ object LivePush {
             .put("lead", hex(s.lead)).put("second", hex(s.second)).put("lastStrobe", s.lastStrobe.toDouble())
             .put("lamps", JSONObject().apply { s.lamps.forEach { (k, v) -> put(k.toString(), hex(v)) } })
             .put("plan", org.json.JSONArray().apply {
-                lamps.forEach { put(JSONObject().put("ch", it.channel).put("name", it.name).put("x", it.x.toDouble()).put("y", it.y.toDouble())) }
+                lamps.forEach { put(JSONObject().put("ch", it.channel).put("name", it.name).put("strip", it.strip).put("x", it.x.toDouble()).put("y", it.y.toDouble())) }
             })
             .put("title", tr?.title ?: JSONObject.NULL).put("artist", tr?.artist ?: JSONObject.NULL)
             .put("position", NowPlaying.positionSec() ?: JSONObject.NULL)

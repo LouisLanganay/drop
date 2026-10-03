@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -195,8 +196,14 @@ class MainActivity : ComponentActivity() {
         TrackMemory.sync(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = Fond, surface = Surface, primary = Texte, onPrimary = Fond)) {
-                Box(Modifier.fillMaxSize().background(Fond).systemBarsPadding()) {
-                    App(prefs)
+                // Le fond vivant prend les couleurs du show, sinon celles de la pochette, sinon un gris bleuté.
+                val live by DropService.live.collectAsState()
+                val piste by NowPlaying.track.collectAsState()
+                val cov = piste?.colors.orEmpty().map { Color(it[0], it[1], it[2]) }
+                val c1 = if (live.running && live.lead != 0) Color(live.lead) else cov.getOrNull(0) ?: Color(0xFF3A3A48)
+                val c2 = if (live.running && live.second != 0) Color(live.second) else cov.getOrNull(1) ?: Color(0xFF26323A)
+                AvecFondVivant(c1, c2) {
+                    Box(Modifier.fillMaxSize().systemBarsPadding()) { App(prefs) }
                 }
             }
         }
@@ -446,8 +453,7 @@ class MainActivity : ComponentActivity() {
             )
         } else {
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface)
-                    .border(1.dp, Ligne, RoundedCornerShape(16.dp)).padding(12.dp),
+                Modifier.fillMaxWidth().verre(22.dp, lentille = false).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp), content = contenu,
             )
         }
@@ -468,8 +474,7 @@ private fun Logo() {
 private fun BoutonZone(area: EntArea?, onClick: () -> Unit) {
     val n = area?.channels?.size ?: 0
     Row(
-        Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp)).background(Surface)
-            .border(1.dp, Ligne2, RoundedCornerShape(12.dp))
+        Modifier.heightIn(min = 44.dp).verre(22.dp).clip(RoundedCornerShape(22.dp))
             .clickable(role = Role.Button, onClickLabel = "Changer de zone", onClick = onClick)
             .padding(start = 14.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -486,7 +491,7 @@ private fun BoutonZone(area: EntArea?, onClick: () -> Unit) {
 @Composable
 private fun BoutonIcone(icone: ImageVector, nom: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Ligne2, RoundedCornerShape(12.dp))
+        Modifier.size(44.dp).verre(22.dp).clip(CircleShape)
             .clickable(role = Role.Button, onClickLabel = nom, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icone, contentDescription = nom, tint = Texte, modifier = Modifier.size(20.dp)) }
@@ -497,8 +502,7 @@ private fun BoutonIcone(icone: ImageVector, nom: String, onClick: () -> Unit) {
 private fun EnDirect(zone: String, accent: Color, temps: Int) {
     val a by animateFloatAsState(if (temps % 2 == 1) 1f else 0.45f, tween(140), label = "pouls")
     Row(
-        Modifier.height(32.dp).clip(RoundedCornerShape(10.dp)).background(Surface)
-            .border(1.dp, Ligne, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp),
+        Modifier.height(36.dp).verre(18.dp).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(accent.copy(alpha = a)))
@@ -517,7 +521,7 @@ private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifie
     val strobe = state.running && state.mode == "Stroboscope"
     val n = lamps.size
     BoxWithConstraints(
-        modifier.clip(RoundedCornerShape(20.dp)).background(Plan).border(1.dp, Ligne, RoundedCornerShape(20.dp))
+        modifier.verre(26.dp, lentille = false).clip(RoundedCornerShape(26.dp))
             .semantics { contentDescription = "Plan de la zone $zone, $n lampes" },
     ) {
         val w = maxWidth
@@ -551,7 +555,7 @@ private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifie
         val cy0 = py(0f)
         Box(
             Modifier.offset(cx0 - 56.dp, cy0 - 22.dp).size(112.dp, 44.dp).clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF141417)).border(1.dp, EteinteBord, RoundedCornerShape(14.dp)),
+                .background(Color.White.copy(alpha = 0.04f)).border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) { Text("Canapé", style = corps(12, color = Tertiaire)) }
         lamps.forEach { lamp ->
@@ -569,31 +573,50 @@ private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifie
     }
 }
 
+/**
+ * Une lampe vue de dessus : une ampoule en verre qui brille de sa couleur (cœur plus clair, reflet en haut à
+ * gauche) et répand sa lumière autour d'elle, d'autant plus loin qu'elle est forte ; le bandeau en barre
+ * lumineuse. Éteinte, un verre sombre cerclé.
+ */
 @Composable
 private fun Lampe(lamp: Lamp, cible: Color?, cx: Dp, cy: Dp, nomDessus: Boolean = false) {
     val c by animateColorAsState(cible ?: Eteinte, tween(110), label = "lampe")
     val force = max(c.red, max(c.green, c.blue))
     val allumee = cible != null && force > 0.08f
-    val lw = if (lamp.strip) 150.dp else 20.dp
-    val lh = if (lamp.strip) 8.dp else 20.dp
+    // Couleur pleine (la luminosité se lit dans la taille du halo), pour que l'ampoule ne vire pas au gris.
+    val vive = if (force > 0f) Color(c.red / force, c.green / force, c.blue / force) else c
+    val lw = if (lamp.strip) 150.dp else 28.dp
+    val lh = if (lamp.strip) 10.dp else 28.dp
+    val forme = RoundedCornerShape(if (lamp.strip) 5.dp else 14.dp)
     Box(
         Modifier.offset(cx - lw / 2, cy - lh / 2).size(lw, lh)
             .drawBehind {
                 if (allumee) {
-                    val r = size.maxDimension * (if (lamp.strip) 0.6f else 1.4f) + 18.dp.toPx()
-                    drawCircle(
-                        Brush.radialGradient(listOf(c.copy(alpha = 0.5f * force), Color.Transparent), center = center, radius = r),
-                        radius = r, center = center,
-                    )
+                    // Lumière répandue sur la pièce, puis la lueur serrée autour de l'ampoule.
+                    val loin = (if (lamp.strip) size.width * 0.55f else 70.dp.toPx()) * (0.6f + 0.6f * force)
+                    drawCircle(Brush.radialGradient(listOf(vive.copy(alpha = 0.28f * force), vive.copy(alpha = 0.08f * force), Color.Transparent), center, loin), loin, center)
+                    val pres = size.maxDimension * (if (lamp.strip) 0.35f else 0.9f) + 10.dp.toPx()
+                    drawCircle(Brush.radialGradient(listOf(vive.copy(alpha = 0.7f * force), Color.Transparent), center, pres), pres, center)
                 }
             }
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (allumee) c else Eteinte)
-            .border(1.dp, if (allumee) Color.Transparent else EteinteBord, RoundedCornerShape(10.dp)),
+            .clip(forme)
+            .drawBehind {
+                if (allumee) {
+                    drawRect(Brush.radialGradient(listOf(lerp(vive, Color.White, 0.65f * force), vive, lerp(vive, Color.Black, 0.25f)), center, size.maxDimension * 0.62f))
+                } else {
+                    drawRect(Brush.radialGradient(listOf(Color(0xFF26262C), Color(0xFF141417)), center, size.maxDimension * 0.6f))
+                }
+                // Reflet du verre en haut à gauche.
+                drawCircle(
+                    Brush.radialGradient(listOf(Color.White.copy(alpha = if (allumee) 0.55f else 0.18f), Color.Transparent), Offset(size.width * 0.3f, size.height * 0.26f), size.minDimension * 0.45f),
+                    size.minDimension * 0.45f, Offset(size.width * 0.3f, size.height * 0.26f),
+                )
+            }
+            .border(0.75.dp, Color.White.copy(alpha = if (allumee) 0.35f else 0.14f), forme),
     )
     Text(
-        lamp.name, Modifier.offset(cx - 52.dp, if (nomDessus) cy - lh / 2 - 22.dp else cy + lh / 2 + 6.dp).width(104.dp),
-        style = corps(12, color = if (allumee) Texte else Tertiaire).copy(textAlign = TextAlign.Center),
+        lamp.name, Modifier.offset(cx - 52.dp, if (nomDessus) cy - lh / 2 - 24.dp else cy + lh / 2 + 8.dp).width(104.dp),
+        style = corps(12, if (allumee) FontWeight.Medium else FontWeight.Normal, color = if (allumee) Texte else Tertiaire).copy(textAlign = TextAlign.Center),
         maxLines = 1, overflow = TextOverflow.Ellipsis,
     )
 }
@@ -620,8 +643,7 @@ private fun Moment(state: LiveState, accent: Color) {
 @Composable
 private fun Compteurs(state: LiveState, accent: Color) {
     Row(
-        Modifier.fillMaxWidth().height(IntrinsicSize.Min).clip(RoundedCornerShape(16.dp)).background(Surface)
-            .border(1.dp, Ligne, RoundedCornerShape(16.dp)),
+        Modifier.fillMaxWidth().height(IntrinsicSize.Min).verre(22.dp, lentille = false),
     ) {
         Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("TEMPO", style = Etiquette.copy(color = Tertiaire))
@@ -631,7 +653,7 @@ private fun Compteurs(state: LiveState, accent: Color) {
                 Text("Temps ${state.beatInBar.coerceIn(1, 4)}", Modifier.padding(start = 4.dp), style = corps(12, color = Secondaire))
             }
         }
-        Box(Modifier.width(1.dp).fillMaxHeight().background(Ligne))
+        Box(Modifier.padding(vertical = 14.dp).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.08f)))
         Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (state.mode) {
                 "Montée" -> {
@@ -722,7 +744,7 @@ private fun Pochette(t: Track?, taille: Dp) {
 private fun Stroboscope(prefs: Prefs, running: Boolean) {
     var on by remember { mutableStateOf(prefs.strobeOn) }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface).border(1.dp, Ligne, RoundedCornerShape(16.dp))
+        Modifier.fillMaxWidth().verre(22.dp, lentille = false)
             .padding(start = 16.dp, end = 8.dp, top = if (running) 6.dp else 10.dp, bottom = if (running) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (running) 8.dp else 12.dp),
     ) {
@@ -785,8 +807,7 @@ private fun FeuilleZone(
 @Composable
 private fun Etape(numero: Int, titre: String, active: Boolean, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface)
-            .border(1.dp, if (active) LigneActive else Ligne, RoundedCornerShape(16.dp))
+        Modifier.fillMaxWidth().verre(22.dp, lentille = false, teinte = Color.White.copy(alpha = if (active) 0.07f else 0.035f))
             .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -806,7 +827,7 @@ private fun Etape(numero: Int, titre: String, active: Boolean, content: @Composa
 @Composable
 private fun EtapeFaite(titre: String, detail: String) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface).border(1.dp, Ligne, RoundedCornerShape(16.dp))
+        Modifier.fillMaxWidth().verre(22.dp, lentille = false)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -856,23 +877,25 @@ private fun LigneAcces(icone: ImageVector, titre: String, texte: String, ok: Boo
     }
 }
 
+/** Le bouton Go/Stop : une lentille teintée de la couleur du morceau, comme un bouton d'iOS. */
 @Composable
 private fun GrandBouton(label: String, couleur: Color, enabled: Boolean = true, onClick: () -> Unit) {
-    val fond by animateColorAsState(couleur, tween(400), label = "bouton")
-    Button(
-        onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().height(64.dp), shape = RoundedCornerShape(18.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = fond, contentColor = Fond, disabledContainerColor = Eteinte, disabledContentColor = Tertiaire,
-        ),
+    val fond by animateColorAsState(if (enabled) couleur else Color.White, tween(400), label = "bouton")
+    Box(
+        Modifier.fillMaxWidth().height(64.dp)
+            .verre(32.dp, teinte = if (enabled) fond.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.05f))
+            .clip(RoundedCornerShape(32.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = corps(20, FontWeight.SemiBold, color = Color.Unspecified).copy(letterSpacing = (-0.2).sp))
+        Text(label, style = corps(20, FontWeight.SemiBold, color = if (enabled) Fond else Tertiaire).copy(letterSpacing = (-0.2).sp))
     }
 }
 
 @Composable
 private fun PetitBouton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     Button(
-        onClick = onClick, enabled = enabled, modifier = Modifier.height(44.dp), shape = RoundedCornerShape(12.dp),
+        onClick = onClick, enabled = enabled, modifier = Modifier.height(44.dp), shape = RoundedCornerShape(22.dp),
         contentPadding = PaddingValues(horizontal = 14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Texte, contentColor = Fond, disabledContainerColor = Eteinte, disabledContentColor = Tertiaire,
@@ -885,7 +908,7 @@ private fun PetitBouton(label: String, enabled: Boolean = true, onClick: () -> U
 @Composable
 private fun ContourBouton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     OutlinedButton(
-        onClick = onClick, enabled = enabled, modifier = Modifier.height(44.dp), shape = RoundedCornerShape(12.dp),
+        onClick = onClick, enabled = enabled, modifier = Modifier.height(44.dp), shape = RoundedCornerShape(22.dp),
         contentPadding = PaddingValues(horizontal = 14.dp), border = BorderStroke(1.dp, Repere),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = Texte, disabledContentColor = Tertiaire),
     ) {

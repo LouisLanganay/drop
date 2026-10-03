@@ -183,14 +183,19 @@ async function vueDirect() {
     if (cle !== planCle) {
       planCle = cle;
       $('#room').innerHTML = `<div class="sofa" style="left:50%;top:50%">canapé</div>` + plan.map(p =>
-        `<div class="lamp" style="left:${Math.min(84, Math.max(16, 50 + p.x * 34))}%;top:${Math.min(80, Math.max(16, 50 - p.y * 40))}%"><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
+        `<div class="lamp${(p.strip ?? /bandeau|strip|ruban/i.test(p.name)) ? ' strip' : ''}" style="left:${Math.min(84, Math.max(16, 50 + p.x * 34))}%;top:${Math.min(80, Math.max(16, 50 - p.y * 40))}%"><b></b><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
     }
+    // Couleur pleine sur l'ampoule, intensité dans le halo et la lumière répandue.
     for (const [ch, c] of Object.entries(st.lamps || {})) {
       const el = $('#lamp' + ch); if (!el) continue;
       const strobe = on && st.mode === 'Stroboscope';
-      el.style.backgroundColor = strobe ? '#fff' : on ? c : 'transparent';
-      el.style.boxShadow = on ? `0 0 24px ${strobe ? '#fff' : c}` : 'none';
+      const v = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16) / 255), f = strobe ? 1 : on ? Math.max(...v) : 0;
+      const vive = f > 0.02 ? '#' + v.map(x => Math.round(x / Math.max(...v) * 255).toString(16).padStart(2, '0')).join('') : '#1c1c20';
+      const box = el.parentElement;
+      box.style.setProperty('--c', strobe ? '#ffffff' : f > 0.08 ? vive : '#1c1c20');
+      box.style.setProperty('--f', f > 0.08 ? f.toFixed(2) : 0);
     }
+
   }
 
   const MOMENTS = ['Silence', 'Calme', 'Groove', 'Énergie', 'Montée', 'Drop'];

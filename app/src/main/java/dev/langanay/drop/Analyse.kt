@@ -118,7 +118,7 @@ internal fun AnalyseScreen(lamps: List<Lamp>, onBack: () -> Unit) {
     ) {
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                Modifier.size(44.dp).verre(22.dp).clip(androidx.compose.foundation.shape.CircleShape)
                     .clickable(role = Role.Button, onClickLabel = "Revenir au show", onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) { Icon(Retour, contentDescription = "Retour", tint = Texte, modifier = Modifier.size(22.dp)) }
@@ -131,8 +131,7 @@ internal fun AnalyseScreen(lamps: List<Lamp>, onBack: () -> Unit) {
         Resume(state, accent)
         MemoireMorceau()
         Canvas(
-            Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(Plan)
-                .border(1.dp, Ligne, RoundedCornerShape(16.dp))
+            Modifier.fillMaxWidth().weight(1f).verre(22.dp, lentille = false).clip(RoundedCornerShape(22.dp))
                 .pointerInput(Unit) { detectTapGestures { fige = if (fige == null) finActuelle() else null } },
         ) {
             image // redessine à chaque image de l'écran
@@ -148,7 +147,7 @@ internal fun AnalyseScreen(lamps: List<Lamp>, onBack: () -> Unit) {
                 Modifier.weight(1f), style = corps(12, color = Secondaire), maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             Box(
-                Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Repere, RoundedCornerShape(12.dp))
+                Modifier.height(44.dp).verre(22.dp).clip(RoundedCornerShape(22.dp))
                     .clickable(role = Role.Button, onClickLabel = "Enregistrer les 5 dernières minutes") {
                         scope.launch {
                             val f = withContext(Dispatchers.IO) { runCatching { Recorder.save(ctx) }.getOrNull() }
@@ -174,13 +173,13 @@ private fun finActuelle(): Double {
 @Composable
 private fun Fenetres(fenetre: Double, onChange: (Double) -> Unit) {
     Row(
-        Modifier.clip(RoundedCornerShape(10.dp)).background(Surface).border(1.dp, Ligne2, RoundedCornerShape(10.dp)).padding(3.dp),
+        Modifier.verre(22.dp).padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         listOf(30.0 to "30 s", 120.0 to "2 min").forEach { (v, nom) ->
             val choisi = fenetre == v
             Box(
-                Modifier.height(38.dp).clip(RoundedCornerShape(8.dp)).background(if (choisi) SurfaceHaute else Color.Transparent)
+                Modifier.height(38.dp).clip(RoundedCornerShape(19.dp)).background(if (choisi) Color.White.copy(alpha = 0.12f) else Color.Transparent)
                     .selectable(selected = choisi, role = Role.RadioButton) { onChange(v) }.padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(nom, style = corps(13, FontWeight.Medium, color = if (choisi) Texte else Secondaire)) }
@@ -208,7 +207,7 @@ private fun MemoireMorceau() {
         )
         if (drops != null) {
             Box(
-                Modifier.height(36.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, Repere, RoundedCornerShape(10.dp))
+                Modifier.height(36.dp).verre(18.dp).clip(RoundedCornerShape(18.dp))
                     .clickable(role = Role.Button, onClickLabel = "Oublier ce morceau") { TrackMemory.forget(ctx, key) }
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
@@ -363,7 +362,7 @@ private fun DrawScope.dessiner(m: TextMeasurer, fin: Double, fenetre: Double, or
     for ((j, lampe) in ordre.withIndex()) {
         val ly = lampes0 + j * (hLampe + 4.dp.toPx())
         texte(lampe.name, petit, 12.dp.toPx(), ly + (hLampe - 15.sp.toPx()) / 2, gauche - 16.dp.toPx())
-        drawRoundRect(Color(0xFF141417), Offset(gauche, ly), Size(pw, hLampe), CornerRadius(3.dp.toPx()))
+        drawRoundRect(Color.White.copy(alpha = 0.03f), Offset(gauche, ly), Size(pw, hLampe), CornerRadius(3.dp.toPx()))
         for (c in 0 until vue.cols) {
             val argb = vue.lampes[j][c]
             if (argb == 0 && !vue.strobe[c]) continue
@@ -430,7 +429,7 @@ private fun DrawScope.dessiner(m: TextMeasurer, fin: Double, fenetre: Double, or
     // Tension (montée vers un drop) et intensité (ce qui fait passer de calme à énergie).
     texte("Tension", petit.copy(color = accent), 12.dp.toPx(), courbes0 + 2.dp.toPx())
     texte("Intensité", petit, 12.dp.toPx(), courbes0 + hCourbes - 16.dp.toPx())
-    drawRoundRect(Color(0xFF141417), Offset(gauche, courbes0), Size(pw, hCourbes), CornerRadius(4.dp.toPx()))
+    drawRoundRect(Color.White.copy(alpha = 0.03f), Offset(gauche, courbes0), Size(pw, hCourbes), CornerRadius(4.dp.toPx()))
     fun courbe(v: FloatArray, couleur: Color, epaisseur: Float, remplir: Boolean) {
         val p = Path()
         var ouvert = false
