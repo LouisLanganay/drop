@@ -11,36 +11,63 @@
 @font-face { font-family: Geist; src: url(/static/fonts/geist_semibold.ttf); font-weight: 600; }
 @font-face { font-family: GeistMono; src: url(/static/fonts/geist_mono_medium.ttf); font-weight: 500; }
 :root {
-  --bg: #0A0A0B; --surface: #121214; --surface2: #18181B; --plan: #101012;
-  --line: #1F1F23; --line2: #26262B; --repere: #2A2A30; --neutre: #4A4A52;
+  --bg: #0A0A0B; --surface: rgba(255,255,255,.04); --surface2: rgba(255,255,255,.08);
+  --plan: rgba(8,8,10,.55); --line: #1F1F23; --line2: #26262B; --repere: #2A2A30; --neutre: #4A4A52;
   --text: #F4F4F5; --muted: #A1A1AA; --dim: #8E8E96;
   --live: #F2B544; --yes: #86EFAC; --no: #FF8A80;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 400 14px/1.45 Geist, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+html { background: var(--bg); }
+body { --c1: #3a3a48; --c2: #26323a; }
+html, body { margin: 0; color: var(--text); font: 400 14px/1.45 Geist, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
 button { font: inherit; color: inherit; }
 .mono, .label { font-family: GeistMono, ui-monospace, monospace; }
 .label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
-header { position: sticky; top: 0; z-index: 5; background: rgba(10,10,11,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-.bar { max-width: 1280px; margin: 0 auto; padding: 0 16px; height: 56px; display: flex; align-items: center; gap: 16px; }
+header { position: sticky; top: 12px; z-index: 5; display: flex; justify-content: center; padding: 0 16px; pointer-events: none; }
+/* Fond vivant : un halo aux couleurs de la pochette en cours, que le verre réfracte. */
+.ambient { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: var(--bg); }
+.ambient i { position: absolute; border-radius: 50%; filter: blur(80px); opacity: .5; transition: background 2.5s ease; }
+.ambient i:nth-child(1) { width: 60vmax; height: 60vmax; left: -15vmax; top: -25vmax; background: var(--c1); animation: flotte 38s ease-in-out infinite alternate; }
+.ambient i:nth-child(2) { width: 50vmax; height: 50vmax; right: -18vmax; top: 10vh; background: var(--c2); animation: flotte 46s ease-in-out infinite alternate-reverse; }
+.ambient i:nth-child(3) { width: 45vmax; height: 45vmax; left: 20vw; bottom: -30vmax; background: var(--c1); opacity: .28; animation: flotte 52s ease-in-out infinite alternate; }
+@keyframes flotte { to { translate: 8vmax 6vmax; } }
+@media (prefers-reduced-motion: reduce) { .ambient i { animation: none; } }
+/* Verre liquide (recette Fynex validée, tranche adoucie) : éléments flottants en lentille. */
+.glass, .card, .room, .lens { position: relative; background: rgb(255 255 255 / .06); border: 0 !important;
+  -webkit-backdrop-filter: blur(6px) saturate(160%) brightness(1.08); backdrop-filter: var(--lens, blur(6px) saturate(160%));
+  box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .12), inset 1.5px 1.5px 1px -1px rgb(255 255 255 / .4),
+    inset -1.5px -1.5px 1px -1px rgb(255 255 255 / .16), inset 0 0 12px rgb(255 255 255 / .05),
+    0 10px 30px -10px rgb(0 0 0 / .55), 0 1px 2px rgb(0 0 0 / .3); }
+.glass::before, .card::before, .room::before, .lens::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; padding: 1.5px;
+  background: conic-gradient(from 0deg, rgb(255 255 255 / .18) 0deg, rgb(255 255 255 / .05) 70deg, rgb(255 255 255 / .5) 135deg,
+    rgb(255 255 255 / .05) 200deg, rgb(255 255 255 / .9) 315deg, rgb(255 255 255 / .18) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: .4; }
+/* Les grandes surfaces : verre dépoli plus calme (la lentille sur une grande carte tordrait tout le contenu). */
+.glass, .card, .room { background: rgb(255 255 255 / .035); -webkit-backdrop-filter: blur(24px) saturate(150%); backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .10), inset 1.5px 1.5px 1px -1px rgb(255 255 255 / .22), inset -1.5px -1.5px 1px -1px rgb(255 255 255 / .08), 0 20px 50px -20px rgb(0 0 0 / .6); }
+.glass::before, .card::before, .room::before { opacity: .22; }
+.row:hover { background: rgb(255 255 255 / .06) !important; }
+.bar { pointer-events: auto; padding: 0 6px 0 16px; height: 52px; border-radius: 26px; display: flex; align-items: center; gap: 14px; max-width: 100%; }
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; letter-spacing: -.02em; text-decoration: none; }
 .logo small { color: var(--dim); font-weight: 400; font-size: 13px; letter-spacing: 0; }
-nav { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line2); border-radius: 10px; background: var(--surface); }
-nav a { text-decoration: none; padding: 7px 12px; border-radius: 8px; color: var(--muted); font-weight: 500; font-size: 13px; }
-nav a.on { background: var(--surface2); color: var(--text); }
+nav { display: flex; gap: 2px; padding: 3px; border-radius: 20px; }
+nav a { text-decoration: none; padding: 7px 13px; border-radius: 17px; color: var(--muted); font-weight: 500; font-size: 13px; transition: color .2s, background .2s; }
+nav a:hover { color: var(--text); }
+nav a.on { background: rgb(255 255 255 / .10); color: var(--text); box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .12); }
 .grow { flex: 1; }
-.btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--repere); background: transparent; cursor: pointer; font-weight: 500; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--repere); background: transparent; cursor: pointer; font-weight: 500; font-size: 13px; text-decoration: none; white-space: nowrap; }
 .btn:hover { background: var(--surface2); }
 .btn.solid { background: var(--text); color: var(--bg); border-color: var(--text); }
 .btn.yes { border-color: #2f5a3d; color: var(--yes); }
 .btn.no { border-color: #5a2f2f; color: var(--no); }
 .btn:disabled { opacity: .4; cursor: default; }
-main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 64px; }
+main { max-width: 1280px; margin: 0 auto; padding: 36px 16px 64px; }
+h1 { font-size: 30px !important; letter-spacing: -.03em !important; }
 h1 { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 4px; }
 h2 { font-size: 16px; font-weight: 600; margin: 0; }
 .sub { color: var(--muted); }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.card { border-radius: 20px; }
 .list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .row { display: grid; grid-template-columns: 170px 90px 1fr 120px; gap: 16px; align-items: center; padding: 14px 16px; text-decoration: none; }
 .row:hover { border-color: var(--line2); background: #141417; }
@@ -57,9 +84,9 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; }
 .panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .tl { padding: 12px 0 8px; }
 .tlhead { display: flex; gap: 8px; align-items: center; padding: 0 16px 10px; flex-wrap: wrap; }
-.seg { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg); }
-.seg button { border: 0; background: none; padding: 6px 10px; border-radius: 7px; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500; }
-.seg button.on { background: var(--surface2); color: var(--text); }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 19px; }
+.seg button { border: 0; background: none; padding: 6px 12px; border-radius: 15px; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500; }
+.seg button.on { background: rgb(255 255 255 / .12); color: var(--text); }
 canvas { display: block; width: 100%; touch-action: pan-y; }
 #overview { height: 44px; cursor: grab; }
 #detail { height: 460px; cursor: crosshair; }
@@ -84,11 +111,12 @@ td.k { color: var(--muted); white-space: nowrap; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--neutre); margin-right: 6px; vertical-align: 1px; }
 .dot.on { background: var(--live); box-shadow: 0 0 0 3px rgba(242,181,68,.18); }
 .live { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
-.room { position: relative; height: 300px; background: var(--plan); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.room { position: relative; height: 300px; border-radius: 20px; overflow: hidden; }
 .lamp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 6px; transition: none; }
-.lamp i { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line2); }
+.lamp i { width: 46px; height: 46px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .2); background-image: radial-gradient(circle at 32% 28%, rgb(255 255 255 / .55), rgb(255 255 255 / 0) 42%), radial-gradient(circle at 70% 80%, rgb(0 0 0 / .25), transparent 60%); }
 .lamp span { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.sofa { position: absolute; transform: translate(-50%, -50%); width: 90px; height: 26px; border: 1px solid var(--repere); border-radius: 6px; color: var(--dim); font-size: 10px; display: grid; place-items: center; }
+.room { background-image: radial-gradient(rgb(255 255 255 / .07) 1px, transparent 1px) !important; background-size: 22px 22px !important; }
+.sofa { position: absolute; transform: translate(-50%, -50%); width: 96px; height: 28px; border: 1px solid rgb(255 255 255 / .14); border-radius: 10px; color: var(--dim); font-size: 10px; display: grid; place-items: center; }
 .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .kv div b { display: block; font: 500 22px GeistMono, monospace; margin-top: 2px; }
 .meter { height: 6px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
@@ -109,7 +137,8 @@ td.k { color: var(--muted); white-space: nowrap; }
 </style>
 </head>
 <body>
-<header><div class="bar">
+<div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+<header><div class="bar lens">
   <a class="logo" href="#/"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5C12 2.5 5 10.1 5 14.7a7 7 0 0 0 14 0C19 10.1 12 2.5 12 2.5Z"/></svg>Drop <small>admin</small></a>
   <nav><a href="#/direct" data-v="direct"><span class="dot" id="livedot"></span>Direct</a><a href="#/" data-v="sessions">Sessions</a><a href="#/morceaux" data-v="morceaux">Morceaux</a><a href="#/reglage" data-v="reglage">Réglage</a></nav>
   <span class="grow"></span>
@@ -119,5 +148,6 @@ td.k { color: var(--muted); white-space: nowrap; }
 <div class="tip" id="tip"></div>
 <div class="toast" id="toast"></div>
 <script src="/static/app.js"></script>
+<script src="/static/glass.js"></script>
 </body>
 </html>

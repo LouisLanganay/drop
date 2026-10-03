@@ -65,9 +65,16 @@ route();
 // Pastille « Direct » : allumée tant que le téléphone envoie un show en cours.
 const enDirect = l => l.state && l.state.running && l.age_ms != null && l.age_ms < 5000;
 async function pastille() {
-  try { $('#livedot').classList.toggle('on', enDirect(await api('/api/live'))); } catch (e) { /* hors ligne */ }
+  try { const l = await api('/api/live'); $('#livedot').classList.toggle('on', enDirect(l)); teinte(l); } catch (e) { /* hors ligne */ }
 }
 pastille(); setInterval(pastille, 3000);
+// Le fond prend les couleurs de la pochette pendant le show, et revient au gris à l'arrêt.
+function teinte(l) {
+  const s = l && l.state, on = enDirect(l);
+  const ok = c => c && c !== '#000000';
+  document.body.style.setProperty('--c1', on && ok(s.lead) ? s.lead : '#3a3a48');
+  document.body.style.setProperty('--c2', on && ok(s.second) ? s.second : '#26323a');
+}
 
 // ─── Direct ───────────────────────────────────────────────────────────────────
 
@@ -79,7 +86,7 @@ async function vueDirect() {
   const marks = [];
   let st = null, age = null, recu = 0, tRecu = 0;
   app.innerHTML = `<div class="top"><h1 style="flex:1">Direct</h1>
-      <div class="seg" id="fen"><button data-f="30" class="on">30 s</button><button data-f="120">2 min</button></div></div>
+      <div class="seg lens" id="fen"><button data-f="30" class="on">30 s</button><button data-f="120">2 min</button></div></div>
     <p class="sub" id="lsub">En attente du téléphone…</p>
     <div id="lres" class="card panel" style="margin-top:12px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 16px"></div>
     <div class="live">
@@ -148,6 +155,7 @@ async function vueDirect() {
 
   function texte() {
     const on = enDirect({ state: st, age_ms: age });
+    teinte({ state: st, age_ms: age });
     $('#livedot').classList.toggle('on', on);
     const sub = $('#lsub');
     if (!st) { sub.textContent = 'Aucun signal du téléphone. Lance Go (Tailscale allumé, envoi activé dans Réglages).'; return; }
@@ -180,7 +188,7 @@ async function vueDirect() {
     for (const [ch, c] of Object.entries(st.lamps || {})) {
       const el = $('#lamp' + ch); if (!el) continue;
       const strobe = on && st.mode === 'Stroboscope';
-      el.style.background = strobe ? '#fff' : on ? c : 'transparent';
+      el.style.backgroundColor = strobe ? '#fff' : on ? c : 'transparent';
       el.style.boxShadow = on ? `0 0 24px ${strobe ? '#fff' : c}` : 'none';
     }
   }
@@ -193,7 +201,7 @@ async function vueDirect() {
     const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
     const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = C.plan; g.fillRect(0, 0, W, H);
+    g.clearRect(0, 0, W, H); g.fillStyle = C.plan; g.fillRect(0, 0, W, H);
     const accent = st && st.lead && st.lead !== '#000000' ? st.lead : C.text;
     const n = tl.t.length;
     if (!n) {
@@ -238,7 +246,7 @@ async function vueDirect() {
     txt('Figure', 12, bandeEffet + 4);
     for (const s of segs) {
       const x0 = Math.max(gauche, X(s.t0)), x1 = Math.min(droite, X(s.t1)); if (x1 - x0 < 1) continue;
-      const [fond, encre] = s.m >= 5 ? [accent, C.bg] : s.m === 4 ? [accent + '66', C.text] : s.m === 0 ? ['#141417', C.dim] : ['#232329', C.text];
+      const [fond, encre] = s.m >= 5 ? [accent, C.bg] : s.m === 4 ? [accent + '66', C.text] : s.m === 0 ? ['rgba(255,255,255,.03)', C.dim] : ['#232329', C.text];
       rr(x0, bandeEffet, x1 - x0 - 1, hB, 5, fond);
       if (x1 - x0 > larg(s.f) + 12) txt(s.f, x0 + 6, bandeEffet + 5, encre);
     }
@@ -247,7 +255,7 @@ async function vueDirect() {
     ordre.forEach((lp, j) => {
       const ly = lampes0 + j * (hL + 4);
       g.save(); g.beginPath(); g.rect(0, 0, gauche - 8, H); g.clip(); txt(lp.name, 12, ly + 4, C.dim); g.restore();
-      rr(gauche, ly, pw, hL, 3, '#141417');
+      rr(gauche, ly, pw, hL, 3, 'rgba(255,255,255,.03)');
       const a = tl.lamps[lp.ch]; if (!a) return;
       for (let i = i0; i < i1; i++) {
         const x0 = X(tl.t[i]), x1 = i + 1 < n ? X(tl.t[i + 1]) : x0 + 2;
@@ -286,7 +294,7 @@ async function vueDirect() {
 
     // Moment.
     txt('Moment', 12, bandeMoment + 4);
-    const gris = ['#141417', '#1F1F24', '#2B2B32', '#3C3C45'];
+    const gris = ['rgba(255,255,255,.03)', '#1F1F24', '#2B2B32', '#3C3C45'];
     const fus = [];
     for (const s of segs) { const p = fus[fus.length - 1]; if (p && momentDe(p.m) === momentDe(s.m)) p.t1 = s.t1; else fus.push({ ...s }); }
     for (const s of fus) {
@@ -299,7 +307,7 @@ async function vueDirect() {
 
     // Tension et intensité.
     txt('Tension', 12, courbes0 + 2, accent); txt('Intensité', 12, courbes0 + hC - 16);
-    rr(gauche, courbes0, pw, hC, 4, '#141417');
+    rr(gauche, courbes0, pw, hC, 4, 'rgba(255,255,255,.03)');
     const courbe = (v, coul, ep, remplir) => {
       g.beginPath(); let ouvert = false, dx = gauche;
       for (let c = 0; c < cols; c++) {
