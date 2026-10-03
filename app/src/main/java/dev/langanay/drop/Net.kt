@@ -123,9 +123,51 @@ object Uploader {
 object LivePush {
     private val exec = Executors.newSingleThreadExecutor()
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var lastT = -1.0
+    private var lastMark = 0L
+
+    /** Nouveaux échantillons de la frise depuis le dernier envoi, un sur deux (25 par seconde), en colonnes. */
+    private fun timeline(): JSONObject = synchronized(Timeline) {
+        val o = JSONObject()
+        val n = Timeline.size
+        if (n == 0 || Timeline.last() < lastT) { lastT = -1.0; lastMark = 0L }
+        val t = org.json.JSONArray(); val lv = org.json.JSONArray(); val b = org.json.JSONArray()
+        val te = org.json.JSONArray(); val inn = org.json.JSONArray(); val mo = org.json.JSONArray(); val fx = org.json.JSONArray()
+        val lamps = Timeline.channels.map { org.json.JSONArray() }
+        var lo = 0
+        var hi = n
+        while (lo < hi) { val mid = (lo + hi) / 2; if (Timeline.time[Timeline.at(mid)] <= lastT) lo = mid + 1 else hi = mid }
+        var i = lo
+        while (i < n) {
+            val k = Timeline.at(i)
+            t.put(Math.round(Timeline.time[k] * 1000) / 1000.0)
+            lv.put(Math.round(Timeline.level[k] * 1000) / 1000.0)
+            b.put(Math.round(Timeline.bass[k] * 1000) / 1000.0)
+            te.put(Math.round(Timeline.tension[k] * 1000) / 1000.0)
+            inn.put(Math.round(Timeline.intensity[k] * 1000) / 1000.0)
+            mo.put(Timeline.mode[k].toInt())
+            fx.put(effetDe(Timeline.mode[k].toInt(), Timeline.figure[k].toInt()))
+            for ((j, arr) in lamps.withIndex()) arr.put(hex(Timeline.lamps[j][k]))
+            lastT = Timeline.time[k]
+            i += 2
+        }
+        o.put("t", t).put("level", lv).put("bass", b).put("tension", te).put("intensity", inn).put("mode", mo).put("fx", fx)
+        o.put("lamps", JSONObject().apply { Timeline.channels.forEachIndexed { j, ch -> put(ch.toString(), lamps[j]) } })
+        val nouveaux = (Timeline.marksAdded - lastMark).coerceIn(0L, Timeline.marks.size.toLong()).toInt()
+        o.put("marks", org.json.JSONArray().apply {
+            Timeline.marks.takeLast(nouveaux).forEach {
+                put(JSONObject().put("t", Math.round(it.t * 1000) / 1000.0).put("k", it.kind.name).put("l", it.label).put("v", it.value))
+            }
+        })
+        lastMark = Timeline.marksAdded
+        o.put("now", Timeline.last())
+        o
+    }
 
     fun send(ctx: Context, s: LiveState, sid: String?, lamps: List<Lamp>) {
         if (!Prefs(ctx).uploadEnabled || !busy.compareAndSet(false, true)) return
+        val prevT = lastT
+        val prevMark = lastMark
         val tr = NowPlaying.track.value
         val o = JSONObject()
             .put("running", s.running).put("status", s.status).put("area", s.area)
@@ -140,9 +182,14 @@ object LivePush {
             .put("title", tr?.title ?: JSONObject.NULL).put("artist", tr?.artist ?: JSONObject.NULL)
             .put("position", NowPlaying.positionSec() ?: JSONObject.NULL)
             .put("session", sid ?: JSONObject.NULL).put("sent_at", System.currentTimeMillis())
+            .put("figureName", FIGURES[s.figure]?.first ?: s.figure)
+            .put("memory", TrackMemory.drops(tr?.let { TrackMemory.key(it.artist, it.title) })?.let { org.json.JSONArray(it) } ?: JSONObject.NULL)
+            .put("timeline", timeline())
         exec.execute {
             try {
-                runCatching { http("POST", "/api/live", o.toString().toByteArray()) }
+                // Envoi raté : la frise repartira de là au prochain envoi, rien ne manque côté dashboard.
+                val ok = runCatching { http("POST", "/api/live", o.toString().toByteArray()).first == 200 }.getOrDefault(false)
+                if (!ok) synchronized(Timeline) { lastT = prevT; lastMark = prevMark }
             } finally { busy.set(false) }
         }
     }

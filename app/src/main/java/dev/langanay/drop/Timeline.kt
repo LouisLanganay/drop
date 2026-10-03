@@ -33,6 +33,9 @@ object Timeline {
     var size = 0
         private set
     val marks = ArrayDeque<Mark>()
+    /** Nombre de repères posés depuis Go, pour que le direct n'envoie que les nouveaux. */
+    var marksAdded = 0L
+        private set
     /** Instant (System.nanoTime) du dernier échantillon, pour faire défiler l'écran sans à-coups entre deux images. */
     @Volatile var lastSampleNanos = 0L
         private set
@@ -44,6 +47,7 @@ object Timeline {
         head = 0
         size = 0
         marks.clear()
+        marksAdded = 0
     }
 
     @Synchronized
@@ -70,6 +74,7 @@ object Timeline {
     @Synchronized
     fun mark(t: Double, kind: Kind, label: String = "", value: Int = 0) {
         marks.addLast(Mark(t, kind, label, value))
+        marksAdded++
     }
 
     /** Case du i-ème échantillon, du plus ancien (0) au plus récent (size - 1). À lire sous le verrou. */

@@ -68,7 +68,7 @@ private val MOMENTS = listOf("Silence", "Calme", "Groove", "Énergie", "Montée"
 private fun momentDe(mode: Int): Int = if (mode == 6) 5 else mode
 
 /** Ce que jouent les lampes, tiré du moment et de la figure enregistrés. */
-private fun effetDe(mode: Int, figure: Int): String = when (Timeline.MODES.getOrNull(mode)) {
+internal fun effetDe(mode: Int, figure: Int): String = when (Timeline.MODES.getOrNull(mode)) {
     "Silence" -> "Veille"
     "Calme" -> "Respiration"
     "Montée" -> "Accélération"

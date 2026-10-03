@@ -301,13 +301,60 @@ def forget_track(key):
 
 # ─── Direct ─────────────────────────────────────────────────────────────────────
 
-# Dernier état envoyé par le téléphone pendant le show (en mémoire seulement : c'est l'instant, pas l'historique).
-live = {"state": None, "at": 0}
+# Dernier état envoyé par le téléphone pendant le show, et la frise des deux dernières minutes (en mémoire
+# seulement : c'est le direct, l'historique complet arrive par les tranches de session).
+LIVE_KEEP = 130.0
+COLS = ("t", "level", "bass", "tension", "intensity", "mode", "fx")
+live = {"state": None, "at": 0, "key": None, "tl": {}, "lamps": {}, "marks": [], "mark_seq": 0}
+live_lock = threading.Lock()
 
 
-def live_view():
-    now = int(time.time() * 1000)
-    return {"state": live["state"], "age_ms": now - live["at"] if live["at"] else None}
+def live_reset(key):
+    live.update(key=key, tl={c: [] for c in COLS}, lamps={}, marks=[], mark_seq=0)
+
+
+def live_ingest(st):
+    tl = st.pop("timeline", None) or {}
+    with live_lock:
+        key = st.get("session") or "local"
+        ts = tl.get("t") or []
+        last = live["tl"]["t"][-1] if live["tl"].get("t") else None
+        if key != live["key"] or (ts and last is not None and ts[0] < last - 5):
+            live_reset(key)
+        for c in COLS:
+            live["tl"][c].extend(tl.get(c) or [])
+        for ch, arr in (tl.get("lamps") or {}).items():
+            cur = live["lamps"].setdefault(ch, [None] * (len(live["tl"]["t"]) - len(arr)))
+            cur.extend(arr)
+        for m in tl.get("marks") or []:
+            live["mark_seq"] += 1
+            live["marks"].append({**m, "id": live["mark_seq"]})
+        now = live["tl"]["t"][-1] if live["tl"]["t"] else 0
+        cut = 0
+        while cut < len(live["tl"]["t"]) and live["tl"]["t"][cut] < now - LIVE_KEEP:
+            cut += 1
+        if cut:
+            for c in COLS:
+                del live["tl"][c][:cut]
+            for arr in live["lamps"].values():
+                del arr[:cut]
+        live["marks"] = [m for m in live["marks"] if m["t"] >= now - LIVE_KEEP - 5]
+        live["state"] = st
+        live["at"] = int(time.time() * 1000)
+
+
+def live_view(since=None, since_mark=0):
+    with live_lock:
+        now = int(time.time() * 1000)
+        tl = live["tl"]
+        i = 0
+        if since is not None and tl.get("t"):
+            import bisect
+            i = bisect.bisect_right(tl["t"], since)
+        out = {c: tl[c][i:] for c in COLS} if tl else {}
+        out["lamps"] = {ch: a[i:] for ch, a in live["lamps"].items()}
+        return {"state": live["state"], "age_ms": now - live["at"] if live["at"] else None, "key": live["key"],
+                "timeline": out, "marks": [m for m in live["marks"] if m["id"] > since_mark]}
 
 
 # ─── HTTP ──────────────────────────────────────────────────────────────────────
@@ -377,13 +424,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/tracks":
                     return self._send(200, tracks_list())
                 if path == "/api/live":
-                    return self._send(200, live_view())
+                    return self._send(200, live_view(float(q["since"]) if "since" in q else None, int(q.get("since_mark", 0))))
                 if path == "/api/calibration":
                     return self._send(200, calibration())
             if method == "POST":
                 if path == "/api/live":
-                    live["state"] = json.loads(self._body() or b"{}")
-                    live["at"] = int(time.time() * 1000)
+                    live_ingest(json.loads(self._body() or b"{}"))
                     return self._send(200, {"ok": True})
                 m = re.fullmatch(r"/api/sessions/([^/]+)/chunks", path)
                 if m:

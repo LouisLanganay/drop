@@ -72,60 +72,276 @@ pastille(); setInterval(pastille, 3000);
 // ─── Direct ───────────────────────────────────────────────────────────────────
 
 async function vueDirect() {
-  let stop = false;
-  cleanup = () => { stop = true; };
-  app.innerHTML = '<h1>Direct</h1><p class="sub" id="lsub">En attente du téléphone…</p><div id="lbody"></div>';
-  let built = false;
-  while (!stop) {
-    let l = null;
-    try { l = await api('/api/live'); } catch (e) { /* réessai */ }
-    if (stop) break;
-    const s = l && l.state, on = l && enDirect(l);
-    $('#livedot').classList.toggle('on', !!on);
-    const sub = $('#lsub'), body = $('#lbody');
-    if (!s || !on) {
-      sub.textContent = s && l.age_ms != null
-        ? `Pas de show en cours. Dernier signal ${quand(Date.now() - l.age_ms)}${s.status ? ' (' + s.status + ')' : ''}.`
-        : 'Pas de show en cours. Lance Go sur le téléphone (Tailscale allumé, envoi activé dans Réglages).';
-      body.innerHTML = ''; built = false;
-    } else {
-      sub.innerHTML = `<span style="color:var(--live)">●</span> ${esc(s.status)} sur ${esc(s.area)}${s.session ? ` · <a href="#/s/${encodeURIComponent(s.session)}">session</a>` : ''}`;
-      if (!built) {
-        body.innerHTML = `<div class="live">
-          <div class="room" id="room"></div>
-          <div class="card panel">
-            <div><div class="label">Morceau</div><div id="ltrack" style="font-size:17px;font-weight:600"></div><div class="sub" id="lartist"></div></div>
-            <div class="kv">
-              <div><span class="label">BPM</span><b id="lbpm"></b></div>
-              <div><span class="label">Mesure</span><b id="lbar"></b></div>
-              <div><span class="label">Drops</span><b id="ldrops"></b></div>
-            </div>
-            <div class="beats" id="lbeats">${'<i></i>'.repeat(4)}</div>
-            <div><div class="label">Moment</div><div id="lfig" style="font-size:15px"></div><div class="sub" id="lmode"></div></div>
-            <div><div class="label">Montée</div><div class="meter"><i id="lten"></i></div></div>
-            <div><div class="label">Niveau</div><div class="meter"><i id="llev" style="background:var(--text)"></i></div></div>
-          </div></div>`;
-        const plan = s.plan || [];
-        $('#room').innerHTML = `<div class="sofa" style="left:50%;top:50%">canapé</div>` + plan.map(p =>
-          `<div class="lamp" style="left:${50 + p.x * 40}%;top:${50 - p.y * 40}%"><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
-        built = true;
-      }
-      $('#ltrack').textContent = s.title || 'Morceau inconnu';
-      $('#lartist').textContent = [s.artist, s.mood, s.position != null ? mmss(s.position) : null].filter(Boolean).join(' · ');
-      $('#lbpm').textContent = s.bpm ? Math.round(s.bpm) : '–';
-      $('#lbar').textContent = s.barInPhrase ? `${s.barInPhrase}/8` : '–';
-      $('#ldrops').textContent = s.drops;
-      document.querySelectorAll('#lbeats i').forEach((b, i) => b.classList.toggle('on', i < s.beatInBar));
-      $('#lfig').textContent = s.figure || '–';
-      $('#lmode').textContent = s.mode || '';
-      $('#lten').style.width = `${Math.round(Math.min(1, s.tension || 0) * 100)}%`;
-      $('#llev').style.width = `${Math.round(Math.min(1, s.level || 0) * 100)}%`;
-      for (const [ch, c] of Object.entries(s.lamps || {})) {
-        const el = $('#lamp' + ch); if (el) { el.style.background = c; el.style.boxShadow = `0 0 24px ${c}`; }
-      }
-    }
-    await new Promise(r => setTimeout(r, 500));
+  let stop = false, raf = 0;
+  cleanup = () => { stop = true; cancelAnimationFrame(raf); };
+  let fen = 30, fige = null, key = null, sinceMark = 0;
+  const tl = { t: [], level: [], bass: [], tension: [], intensity: [], mode: [], fx: [], lamps: {} };
+  const marks = [];
+  let st = null, age = null, recu = 0, tRecu = 0;
+  app.innerHTML = `<div class="top"><h1 style="flex:1">Direct</h1>
+      <div class="seg" id="fen"><button data-f="30" class="on">30 s</button><button data-f="120">2 min</button></div></div>
+    <p class="sub" id="lsub">En attente du téléphone…</p>
+    <div id="lres" class="card panel" style="margin-top:12px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 16px"></div>
+    <div class="live">
+      <div class="room" id="room"></div>
+      <div class="card panel">
+        <div><div class="label">Morceau</div><div id="ltrack" style="font-size:17px;font-weight:600">–</div><div class="sub" id="lartist"></div></div>
+        <div class="sub" id="lmem"></div>
+        <div class="kv">
+          <div><span class="label">BPM</span><b id="lbpm">–</b></div>
+          <div><span class="label">Mesure</span><b id="lbar">–</b></div>
+          <div><span class="label">Drops</span><b id="ldrops">–</b></div>
+        </div>
+        <div class="beats" id="lbeats">${'<i></i>'.repeat(4)}</div>
+        <div><div class="label">Montée</div><div class="meter"><i id="lten"></i></div></div>
+        <div><div class="label">Niveau</div><div class="meter"><i id="llev" style="background:var(--text)"></i></div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;overflow:hidden"><canvas id="lgraph" style="height:620px;cursor:pointer"></canvas></div>
+    <p class="hint" id="lhint" style="margin-top:8px">Clique sur le graphe pour le figer.</p>`;
+  document.querySelectorAll('#fen button').forEach(b => b.onclick = () => {
+    fen = +b.dataset.f; document.querySelectorAll('#fen button').forEach(x => x.classList.toggle('on', x === b));
+  });
+  const cv = $('#lgraph');
+  cv.onclick = () => { fige = fige == null ? present() : null; $('#lhint').textContent = fige == null ? 'Clique sur le graphe pour le figer.' : 'Figé. Clique pour reprendre.'; };
+  let planCle = '';
+
+  function present() {
+    const n = tl.t.length; if (!n) return 0;
+    const last = tl.t[n - 1];
+    return st && st.running && age != null && age < 5000 ? last + Math.min(0.6, (performance.now() - tRecu) / 1000) : last;
   }
+
+  function ajoute(l) {
+    if (l.key !== key) { key = l.key; for (const c in tl) if (c !== 'lamps') tl[c].length = 0; tl.lamps = {}; marks.length = 0; sinceMark = 0; }
+    const x = l.timeline || {}, ts = x.t || [];
+    if (ts.length && tl.t.length && ts[0] < tl.t[tl.t.length - 1] - 5) { for (const c in tl) if (c !== 'lamps') tl[c].length = 0; tl.lamps = {}; marks.length = 0; }
+    const n0 = tl.t.length;
+    for (const c of ['t', 'level', 'bass', 'tension', 'intensity', 'mode', 'fx']) tl[c].push(...(x[c] || []));
+    for (const [ch, a] of Object.entries(x.lamps || {})) {
+      if (!tl.lamps[ch]) tl.lamps[ch] = new Array(n0).fill(null);
+      tl.lamps[ch].push(...a);
+    }
+    for (const m of l.marks || []) { marks.push(m); sinceMark = Math.max(sinceMark, m.id); }
+    // Deux minutes et demie gardées.
+    const now = tl.t[tl.t.length - 1];
+    let cut = 0; while (cut < tl.t.length && tl.t[cut] < now - 150) cut++;
+    if (cut) { for (const c in tl) if (c !== 'lamps') tl[c].splice(0, cut); for (const a of Object.values(tl.lamps)) a.splice(0, cut); }
+    while (marks.length && marks[0].t < now - 155) marks.shift();
+  }
+
+  async function boucle() {
+    while (!stop) {
+      try {
+        const since = tl.t.length ? `since=${tl.t[tl.t.length - 1]}&` : '';
+        const l = await api(`/api/live?${since}since_mark=${key ? sinceMark : 0}`);
+        if (stop) break;
+        if (l.key !== key && since) { for (const c in tl) if (c !== 'lamps') tl[c].length = 0; tl.lamps = {}; marks.length = 0; sinceMark = 0; key = undefined; continue; }
+        st = l.state; age = l.age_ms;
+        if ((l.timeline?.t || []).length) tRecu = performance.now();
+        ajoute(l);
+        texte();
+      } catch (e) { /* réessai */ }
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+
+  function texte() {
+    const on = enDirect({ state: st, age_ms: age });
+    $('#livedot').classList.toggle('on', on);
+    const sub = $('#lsub');
+    if (!st) { sub.textContent = 'Aucun signal du téléphone. Lance Go (Tailscale allumé, envoi activé dans Réglages).'; return; }
+    sub.innerHTML = on
+      ? `<span style="color:var(--live)">●</span> ${esc(st.status)} sur ${esc(st.area)}${st.session ? ` · <a href="#/s/${encodeURIComponent(st.session)}">session</a>` : ''}`
+      : `Pas de show en cours. Dernier signal ${quand(Date.now() - age)}. Le graphe garde le dernier show.`;
+    const fort = ['Montée', 'DROP', 'Stroboscope'].includes(st.mode);
+    $('#lres').innerHTML = on ? `<b style="font-size:15px;color:${fort ? st.lead : 'var(--text)'}">${esc(st.mode === 'DROP' || st.mode === 'Stroboscope' ? 'Drop' : st.mode)}</b>
+      <span class="sub" style="font-size:15px">${esc(st.figureName || st.figure || '')}</span><span class="grow"></span>
+      <span class="mono" style="color:var(--dim);font-size:12px">${Math.round(st.bpm)} BPM · ${Math.min(8, Math.max(1, st.barInPhrase))}/8 · T${Math.min(4, Math.max(1, st.beatInBar))}${st.mood ? ' · ' + esc(st.mood) : ''}</span>`
+      : '<span class="sub">Arrêté.</span>';
+    $('#ltrack').textContent = st.title || 'Morceau inconnu';
+    $('#lartist').textContent = [st.artist, st.position != null ? mmss(st.position) : null].filter(Boolean).join(' · ');
+    $('#lmem').textContent = !st.title ? '' : st.memory == null ? 'Morceau pas encore connu : il le sera après une écoute en entier.'
+      : !st.memory.length ? 'Morceau connu, sans drop.' : `Morceau connu : drop${st.memory.length > 1 ? 's' : ''} à ${st.memory.map(mmss).join(', ')}.`;
+    $('#lbpm').textContent = st.bpm ? Math.round(st.bpm) : '–';
+    $('#lbar').textContent = st.barInPhrase ? `${st.barInPhrase}/8` : '–';
+    $('#ldrops').textContent = st.drops ?? '–';
+    document.querySelectorAll('#lbeats i').forEach((b, i) => b.classList.toggle('on', on && i < st.beatInBar));
+    $('#lten').style.width = `${Math.round(Math.min(1, st.tension || 0) * 100)}%`;
+    $('#lten').style.background = st.lead || 'var(--live)';
+    $('#llev').style.width = `${Math.round(Math.min(1, st.level || 0) * 100)}%`;
+    const plan = st.plan || [];
+    const cle = plan.map(p => p.ch + p.name).join();
+    if (cle !== planCle) {
+      planCle = cle;
+      $('#room').innerHTML = `<div class="sofa" style="left:50%;top:50%">canapé</div>` + plan.map(p =>
+        `<div class="lamp" style="left:${Math.min(84, Math.max(16, 50 + p.x * 34))}%;top:${Math.min(80, Math.max(16, 50 - p.y * 40))}%"><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
+    }
+    for (const [ch, c] of Object.entries(st.lamps || {})) {
+      const el = $('#lamp' + ch); if (!el) continue;
+      const strobe = on && st.mode === 'Stroboscope';
+      el.style.background = strobe ? '#fff' : on ? c : 'transparent';
+      el.style.boxShadow = on ? `0 0 24px ${strobe ? '#fff' : c}` : 'none';
+    }
+  }
+
+  const MOMENTS = ['Silence', 'Calme', 'Groove', 'Énergie', 'Montée', 'Drop'];
+  const momentDe = m => m === 6 ? 5 : m;
+
+  function dessine() {
+    raf = requestAnimationFrame(dessine);
+    const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = C.plan; g.fillRect(0, 0, W, H);
+    const accent = st && st.lead && st.lead !== '#000000' ? st.lead : C.text;
+    const n = tl.t.length;
+    if (!n) {
+      g.fillStyle = C.muted; g.font = '14px Geist'; g.textAlign = 'center';
+      g.fillText('Lance Go : le graphe se construit en direct.', W / 2, H / 2); g.textAlign = 'left'; return;
+    }
+    const vivant = fige == null && st && st.running && age < 5000;
+    const fin = fige ?? present(), debut = fin - fen;
+    const gauche = W < 600 ? 92 : 110, droite = W - 12, pw = droite - gauche;
+    const X = t => gauche + (t - debut) / fen * pw;
+    const ordre = (st?.plan || []).slice().sort((a, b) => a.x - b.x);
+    const petit = '11px Geist', mono = '500 10px GeistMono';
+    const txt = (s, x, y, coul = C.dim, font = petit) => { g.font = font; g.fillStyle = coul; g.textBaseline = 'top'; g.fillText(s, x, y); return g.measureText(s).width; };
+    const larg = (s, font = petit) => { g.font = font; return g.measureText(s).width; };
+    const rr = (x, y, w, h, r, c) => { g.fillStyle = c; g.beginPath(); g.roundRect(x, y, Math.max(0, w), h, r); g.fill(); };
+
+    let y = 12; const titreEffets = y; y += 20; const bandeEffet = y; const hB = 22; y += hB + 6;
+    const hL = 20, lampes0 = y; y += ordre.length * (hL + 4) + 12;
+    const titreMusique = y; y += 20; const onde0 = y;
+    const analyse0 = H - 192, onde1 = analyse0 - 14, grille = analyse0 + 20, bandeMoment = grille + 18;
+    const courbes0 = bandeMoment + hB + 6, hC = 60, reperes0 = courbes0 + hC + 6, axe = reperes0 + 34;
+
+    // Index de la fenêtre.
+    let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (tl.t[m] < debut) lo = m + 1; else hi = m; }
+    const i0 = Math.max(0, lo - 1);
+    let i1 = n; while (i1 > i0 && tl.t[i1 - 1] > fin) i1--;
+
+    // Mesures en fond.
+    for (const r of marks) {
+      if (r.k !== 'BEAT' || r.v % 4) continue;
+      const xb = X(r.t); if (xb < gauche || xb > droite) continue;
+      g.fillStyle = r.v === 0 ? 'rgba(74,74,82,.55)' : C.line2; g.fillRect(xb, bandeEffet, 1, reperes0 - bandeEffet);
+    }
+    txt('EFFETS', 12, titreEffets, C.dim, mono); txt('MUSIQUE', 12, titreMusique, C.dim, mono); txt('ANALYSE', 12, analyse0, C.dim, mono);
+
+    // Segments (moment + effet).
+    const segs = [];
+    for (let i = i0; i < i1; i++) {
+      const t = tl.t[i], m = tl.mode[i], f = tl.fx[i], l = segs[segs.length - 1];
+      if (l && l.m === m && l.f === f) l.t1 = t; else segs.push({ t0: Math.max(t, debut), t1: t, m, f });
+    }
+    txt('Figure', 12, bandeEffet + 4);
+    for (const s of segs) {
+      const x0 = Math.max(gauche, X(s.t0)), x1 = Math.min(droite, X(s.t1)); if (x1 - x0 < 1) continue;
+      const [fond, encre] = s.m >= 5 ? [accent, C.bg] : s.m === 4 ? [accent + '66', C.text] : s.m === 0 ? ['#141417', C.dim] : ['#232329', C.text];
+      rr(x0, bandeEffet, x1 - x0 - 1, hB, 5, fond);
+      if (x1 - x0 > larg(s.f) + 12) txt(s.f, x0 + 6, bandeEffet + 5, encre);
+    }
+
+    // Lampes.
+    ordre.forEach((lp, j) => {
+      const ly = lampes0 + j * (hL + 4);
+      g.save(); g.beginPath(); g.rect(0, 0, gauche - 8, H); g.clip(); txt(lp.name, 12, ly + 4, C.dim); g.restore();
+      rr(gauche, ly, pw, hL, 3, '#141417');
+      const a = tl.lamps[lp.ch]; if (!a) return;
+      for (let i = i0; i < i1; i++) {
+        const x0 = X(tl.t[i]), x1 = i + 1 < n ? X(tl.t[i + 1]) : x0 + 2;
+        const strobe = tl.mode[i] === 6, c = strobe ? 'rgba(255,255,255,.85)' : a[i];
+        if (!c || c === '#000000') continue;
+        g.fillStyle = c; g.fillRect(Math.max(gauche, x0), ly, Math.min(droite, x1 + .5) - Math.max(gauche, x0), hL);
+      }
+    });
+
+    // Musique.
+    const mil = (onde0 + onde1) / 2, demi = (onde1 - onde0) / 2;
+    txt('Son', 12, mil - demi / 2 - 8); txt('Basses', 12, mil + demi / 2 - 8);
+    g.fillStyle = C.line2; g.fillRect(gauche, mil, pw, 1);
+    const cols = Math.max(1, Math.floor(pw / 2)), cw = pw / cols;
+    const nv = new Float32Array(cols), bs = new Float32Array(cols), te = new Float32Array(cols).fill(-1), it = new Float32Array(cols).fill(-1);
+    for (let i = i0; i < i1; i++) {
+      const c = Math.floor((tl.t[i] - debut) / fen * cols); if (c < 0 || c >= cols) continue;
+      nv[c] = Math.max(nv[c], tl.level[i]); bs[c] = Math.max(bs[c], tl.bass[i]); te[c] = tl.tension[i]; it[c] = tl.intensity[i];
+    }
+    for (let c = 0; c < cols; c++) {
+      const xc = gauche + c * cw, hn = Math.min(1, nv[c]) * demi, hb = Math.min(1, bs[c]) * demi;
+      if (hn > .5) { g.fillStyle = 'rgba(161,161,170,.75)'; g.fillRect(xc, mil - hn, cw * .8, hn); }
+      if (hb > .5) { g.globalAlpha = .9; g.fillStyle = accent; g.fillRect(xc, mil + 1, cw * .8, hb); g.globalAlpha = 1; }
+    }
+
+    // Temps et mesures.
+    txt('Mesure', 12, grille + 1);
+    let finNum = -1;
+    for (const r of marks) {
+      if (r.k !== 'BEAT') continue;
+      const xb = X(r.t); if (xb < gauche || xb > droite) continue;
+      const mes = r.v % 4 === 0, ph = r.v === 0, h = ph ? 16 : mes ? 10 : 4;
+      g.fillStyle = ph ? C.text : mes ? C.muted : C.neutre; g.fillRect(xb, grille + 16 - h, ph ? 2 : 1.5, h);
+      if (mes && (fen <= 30 || ph) && xb > finNum) finNum = xb + txt(String((r.v >> 2) + 1), xb + 3, grille, ph ? C.text : C.dim, mono) + 6;
+    }
+
+    // Moment.
+    txt('Moment', 12, bandeMoment + 4);
+    const gris = ['#141417', '#1F1F24', '#2B2B32', '#3C3C45'];
+    const fus = [];
+    for (const s of segs) { const p = fus[fus.length - 1]; if (p && momentDe(p.m) === momentDe(s.m)) p.t1 = s.t1; else fus.push({ ...s }); }
+    for (const s of fus) {
+      const x0 = Math.max(gauche, X(s.t0)), x1 = Math.min(droite, X(s.t1)); if (x1 - x0 < 1) continue;
+      const mo = momentDe(s.m);
+      const [fond, encre] = mo === 5 ? [accent, C.bg] : mo === 4 ? [accent + '66', C.text] : [gris[mo], mo === 0 ? C.dim : C.text];
+      rr(x0, bandeMoment, x1 - x0 - 1, hB, 5, fond);
+      if (x1 - x0 > larg(MOMENTS[mo]) + 12) txt(MOMENTS[mo], x0 + 6, bandeMoment + 5, encre);
+    }
+
+    // Tension et intensité.
+    txt('Tension', 12, courbes0 + 2, accent); txt('Intensité', 12, courbes0 + hC - 16);
+    rr(gauche, courbes0, pw, hC, 4, '#141417');
+    const courbe = (v, coul, ep, remplir) => {
+      g.beginPath(); let ouvert = false, dx = gauche;
+      for (let c = 0; c < cols; c++) {
+        if (v[c] < 0) continue;
+        const xc = gauche + (c + .5) * cw, yc = courbes0 + hC - 2 - Math.min(1, Math.max(0, v[c])) * (hC - 4);
+        if (!ouvert) { g.moveTo(xc, yc); ouvert = true; } else g.lineTo(xc, yc); dx = xc;
+      }
+      if (!ouvert) return;
+      g.strokeStyle = coul; g.lineWidth = ep; g.stroke();
+      if (remplir) { g.lineTo(dx, courbes0 + hC); g.lineTo(gauche, courbes0 + hC); g.closePath(); g.globalAlpha = .16; g.fillStyle = coul; g.fill(); g.globalAlpha = 1; }
+    };
+    courbe(it, C.muted, 1.5, false); courbe(te, accent, 2, true);
+
+    // Repères.
+    txt('Repères', 12, reperes0 + 2);
+    const finL = [-1, -1];
+    for (const r of marks) {
+      if (r.k === 'BEAT') continue;
+      const xr = X(r.t); if (xr < gauche - 2 || xr > droite + 2) continue;
+      const coul = r.k === 'DROP' ? accent : r.k === 'TRACK' ? C.text : r.k === 'NOT_DROP' ? C.muted : C.dim;
+      if (r.k === 'DROP') { g.fillStyle = accent; g.fillRect(xr - 1, bandeEffet, 2, reperes0 + 30 - bandeEffet); }
+      else if (r.k === 'TRACK') { g.setLineDash([6, 4]); g.strokeStyle = C.muted; g.lineWidth = 1; g.beginPath(); g.moveTo(xr, bandeEffet); g.lineTo(xr, reperes0 + 30); g.stroke(); g.setLineDash([]); }
+      else if (r.k === 'NOT_DROP') { g.strokeStyle = C.muted; g.lineWidth = 1.5; g.beginPath(); g.arc(xr, reperes0 + 8, 3.5, 0, 7); g.stroke(); }
+      else { g.fillStyle = coul; g.fillRect(xr, reperes0, 1.5, 12); }
+      const font = r.k === 'DROP' ? '500 11px Geist' : petit, w = larg(r.l, font), lx = Math.min(xr + 5, droite - w);
+      const li = lx > finL[0] ? 0 : lx > finL[1] ? 1 : -1; if (li < 0) continue;
+      txt(r.l, lx, reperes0 + li * 15, coul, font); finL[li] = lx + w + 6;
+    }
+
+    // Axe.
+    const mt = vivant ? 'MAINTENANT' : 'FIGÉ', dm = droite - larg(mt, mono);
+    txt(mt, dm, axe + 5, C.muted, mono);
+    const pas = fen <= 30 ? 5 : 30;
+    for (let s = pas; s < fen - .1; s += pas) {
+      const xs = X(fin - s); g.fillStyle = C.repere; g.fillRect(xs, axe, 1, 4);
+      const lib = `-${s} s`, w = larg(lib, mono); if (xs + w / 2 < dm - 8) txt(lib, xs - w / 2, axe + 5, C.dim, mono);
+    }
+    if (vivant) { g.fillStyle = 'rgba(244,244,245,.35)'; g.fillRect(droite, bandeEffet, 1, reperes0 + 30 - bandeEffet); }
+  }
+
+  dessine();
+  boucle();
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
