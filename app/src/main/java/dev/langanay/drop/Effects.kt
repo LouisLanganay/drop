@@ -107,6 +107,11 @@ class Effects(channels: List<Channel>) {
     private var beatAt = -10.0
     private var kickAt = -10.0
     private var dropAt = -100.0
+    /** Montée en cours : son début, la fin du noir (début de mesure), et son style (une sur deux : noir puis montée). */
+    private var riseAt = -100.0
+    private var riseBlackUntil = -100.0
+    private var rises = 0
+    private var lastMode = ""
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
     @Volatile private var testRequested = false
@@ -213,10 +218,21 @@ class Effects(channels: List<Channel>) {
             x > 0.6f -> "Énergie"
             else -> "Groove"
         }
+        if (mode == "Montée" && lastMode != "Montée") {
+            // Nouvelle montée : noir en un temps, tenu jusqu'au début de la mesure suivante.
+            rises++
+            riseAt = now
+            val inBar = Math.floorMod(beats, 4L).toInt()
+            var fin = beatAt + period * (4 - inBar)
+            while (fin < now + period) fin += period * 4
+            riseBlackUntil = fin
+        }
+        lastMode = mode
+        val noirMontee = rises % 2 == 0
         figureLabel = when (mode) {
             "Groove", "Énergie" -> figure.label
             "DROP" -> "Explosion"
-            "Montée" -> "Accélération"
+            "Montée" -> if (noirMontee) "Noir et montée" else "Accélération"
             else -> ""
         }
 
@@ -231,7 +247,24 @@ class Effects(channels: List<Channel>) {
                 "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
                 "Silence" -> scale(p, 0.05f)
                 "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
-                "Montée" -> {
+                "Montée" -> if (noirMontee) {
+                    // Noir, puis une seule couleur qui remonte avec la tension de la musique, en pulsant sur les
+                    // temps, puis les croches, puis les doubles croches (un roulement), et blanchit avant le drop.
+                    // Le noir reste une veilleuse à 2 % : jamais tout éteint.
+                    if (now < riseBlackUntil) {
+                        down = 0.12f
+                        scale(p, 0.02f)
+                    } else {
+                        up = 0.02f
+                        down = 0.05f
+                        val b = s.buildup.coerceIn(0f, 1f)
+                        val sub = if (b < 0.5f) 1 else if (b < 0.8f) 2 else 4
+                        val ph = (phase * sub) % 1.0
+                        val pulse = exp(-ph * 4.0).toFloat()
+                        val base = 0.04f + 0.86f * smooth(((b - 0.3f) / 0.7f).coerceIn(0f, 1f))
+                        scale(mix(p, WHITE, 0.35f * b * b), (base + 0.12f * pulse * (0.4f + b)).coerceAtMost(1f))
+                    }
+                } else {
                     // Poursuite qui accélère (1, 2 puis 4 lampes par temps) et blanchit, deux lampes allumées au plus.
                     down = 0.06f
                     val speed = if (s.buildup < 0.5f) 1 else if (s.buildup < 0.75f) 2 else 4
