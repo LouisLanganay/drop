@@ -117,6 +117,40 @@ object Uploader {
 }
 
 /**
+ * Direct : l'état du show part au serveur deux fois par seconde, pour le suivre sur le dashboard pendant qu'il tourne.
+ * Rien n'est gardé : si un envoi est encore en vol ou échoue, l'état suivant le remplace.
+ */
+object LivePush {
+    private val exec = Executors.newSingleThreadExecutor()
+    private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun send(ctx: Context, s: LiveState, sid: String?, lamps: List<Lamp>) {
+        if (!Prefs(ctx).uploadEnabled || !busy.compareAndSet(false, true)) return
+        val tr = NowPlaying.track.value
+        val o = JSONObject()
+            .put("running", s.running).put("status", s.status).put("area", s.area)
+            .put("bpm", s.bpm.toDouble()).put("level", s.level.toDouble()).put("mode", s.mode).put("figure", s.figure)
+            .put("mood", s.mood).put("drops", s.drops).put("error", s.error ?: JSONObject.NULL)
+            .put("beatInBar", s.beatInBar).put("barInPhrase", s.barInPhrase).put("tension", s.tension.toDouble())
+            .put("lead", hex(s.lead)).put("second", hex(s.second)).put("lastStrobe", s.lastStrobe.toDouble())
+            .put("lamps", JSONObject().apply { s.lamps.forEach { (k, v) -> put(k.toString(), hex(v)) } })
+            .put("plan", org.json.JSONArray().apply {
+                lamps.forEach { put(JSONObject().put("ch", it.channel).put("name", it.name).put("x", it.x.toDouble()).put("y", it.y.toDouble())) }
+            })
+            .put("title", tr?.title ?: JSONObject.NULL).put("artist", tr?.artist ?: JSONObject.NULL)
+            .put("position", NowPlaying.positionSec() ?: JSONObject.NULL)
+            .put("session", sid ?: JSONObject.NULL).put("sent_at", System.currentTimeMillis())
+        exec.execute {
+            try {
+                runCatching { http("POST", "/api/live", o.toString().toByteArray()) }
+            } finally { busy.set(false) }
+        }
+    }
+
+    private fun hex(c: Int) = "#%06X".format(c and 0xFFFFFF)
+}
+
+/**
  * Mémoire des morceaux : pour chaque morceau entendu en entier, la position (dans le morceau) de ses vrais drops,
  * calculée par le serveur sur tout le morceau. Gardée sur le téléphone pour marcher sans réseau, mise à jour au Go
  * et après chaque session. Un morceau connu ne joue un drop qu'à une position mémorisée, et seulement si le son le

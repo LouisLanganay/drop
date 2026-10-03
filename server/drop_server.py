@@ -299,6 +299,17 @@ def forget_track(key):
     return {"ok": True}
 
 
+# ─── Direct ─────────────────────────────────────────────────────────────────────
+
+# Dernier état envoyé par le téléphone pendant le show (en mémoire seulement : c'est l'instant, pas l'historique).
+live = {"state": None, "at": 0}
+
+
+def live_view():
+    now = int(time.time() * 1000)
+    return {"state": live["state"], "age_ms": now - live["at"] if live["at"] else None}
+
+
 # ─── HTTP ──────────────────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -365,9 +376,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, session_series(m.group(1), float(q.get("from", 0)), float(q.get("to", 1e9)), min(4000, int(q.get("n", 1500)))))
                 if path == "/api/tracks":
                     return self._send(200, tracks_list())
+                if path == "/api/live":
+                    return self._send(200, live_view())
                 if path == "/api/calibration":
                     return self._send(200, calibration())
             if method == "POST":
+                if path == "/api/live":
+                    live["state"] = json.loads(self._body() or b"{}")
+                    live["at"] = int(time.time() * 1000)
+                    return self._send(200, {"ok": True})
                 m = re.fullmatch(r"/api/sessions/([^/]+)/chunks", path)
                 if m:
                     return self._send(200, ingest_chunk(m.group(1), int(q.get("seq", 0)), self._body()))

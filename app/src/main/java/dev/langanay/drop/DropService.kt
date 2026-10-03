@@ -124,6 +124,8 @@ class DropService : Service() {
             stream = s
 
             val effects = Effects(area.channels)
+            // Plan du salon pour le direct du dashboard (noms des lampes et positions du pont).
+            val plan = runCatching { bridge.lamps(user, area) }.getOrElse { area.channels.mapIndexed { i, c -> Lamp(c.id, "Lampe ${i + 1}", c.x, c.y, false) } }
             Timeline.reset(area.channels.map { it.id })
             Recorder.reset()
             // Envoi de la session au serveur (page Réglages), par tranches de 30 s.
@@ -219,11 +221,13 @@ class DropService : Service() {
                         lead = argb(effects.lead), second = argb(effects.second),
                         lamps = out.mapValues { argb(it.value) }, lastStrobe = effects.lastStrobeLength.toFloat(),
                     )
+                    if (beats % 5L == 0L) LivePush.send(this, live.value, sessionId, plan)
                 }
                 val spent = (System.nanoTime() - t0) / 1_000_000
                 if (spent < 20) Thread.sleep(20 - spent)
             }
             live.value = live.value.copy(running = false, status = "Arrêté")
+            LivePush.send(this, live.value, sessionId, plan)
         } catch (e: Exception) {
             Log.e(TAG, "arrêt sur erreur", e)
             live.value = LiveState(running = false, status = "Erreur", error = messageErreur(e))

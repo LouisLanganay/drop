@@ -81,6 +81,20 @@ td.k { color: var(--muted); white-space: nowrap; }
 .sel { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-weight: 500; display: none; z-index: 20; }
 .short { display: none; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--neutre); margin-right: 6px; vertical-align: 1px; }
+.dot.on { background: var(--live); box-shadow: 0 0 0 3px rgba(242,181,68,.18); }
+.live { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+.room { position: relative; height: 300px; background: var(--plan); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.lamp { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 6px; transition: none; }
+.lamp i { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line2); }
+.lamp span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.sofa { position: absolute; transform: translate(-50%, -50%); width: 90px; height: 26px; border: 1px solid var(--repere); border-radius: 6px; color: var(--dim); font-size: 10px; display: grid; place-items: center; }
+.kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.kv div b { display: block; font: 500 22px GeistMono, monospace; margin-top: 2px; }
+.meter { height: 6px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--live); }
+.beats { display: flex; gap: 6px; } .beats i { flex: 1; height: 8px; border-radius: 2px; background: var(--surface2); } .beats i.on { background: var(--text); }
+@media (max-width: 900px) { .live { grid-template-columns: 1fr; } .room { height: 240px; } }
 @media (max-width: 600px) {
   .bar { padding: 0 12px; gap: 8px; } nav a { padding: 6px 8px; } .long { display: none; } .short { display: inline; }
   h1 { font-size: 22px; } main { padding: 16px 12px 48px; }
@@ -96,7 +110,7 @@ td.k { color: var(--muted); white-space: nowrap; }
 <body>
 <header><div class="bar">
   <a class="logo" href="#/"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5C12 2.5 5 10.1 5 14.7a7 7 0 0 0 14 0C19 10.1 12 2.5 12 2.5Z"/></svg>Drop <small>admin</small></a>
-  <nav><a href="#/" data-v="sessions">Sessions</a><a href="#/morceaux" data-v="morceaux">Morceaux</a><a href="#/reglage" data-v="reglage">Réglage</a></nav>
+  <nav><a href="#/direct" data-v="direct"><span class="dot" id="livedot"></span>Direct</a><a href="#/" data-v="sessions">Sessions</a><a href="#/morceaux" data-v="morceaux">Morceaux</a><a href="#/reglage" data-v="reglage">Réglage</a></nav>
   <span class="grow"></span>
   <a class="btn" id="apk" href="/apk" style="display:none"><span class="long">Télécharger l'APK</span><span class="short">APK</span></a>
 </div></header>

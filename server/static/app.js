@@ -50,7 +50,8 @@ async function route() {
     if (h.startsWith('/s/')) {
       const [id, at] = h.slice(3).split('@');
       await vueSession(decodeURIComponent(id), at ? parseFloat(at) : null);
-    } else if (h.startsWith('/morceaux')) await vueMorceaux();
+    } else if (h.startsWith('/direct')) await vueDirect();
+    else if (h.startsWith('/morceaux')) await vueMorceaux();
     else if (h.startsWith('/reglage')) await vueReglage();
     else await vueSessions();
   } catch (e) {
@@ -60,6 +61,72 @@ async function route() {
 window.addEventListener('hashchange', route);
 api('/api/apk-info').then(i => { if (i.exists) { const a = $('#apk'); a.style.display = ''; a.title = `Version du ${quand(i.mtime)}`; } }).catch(() => {});
 route();
+
+// Pastille « Direct » : allumée tant que le téléphone envoie un show en cours.
+const enDirect = l => l.state && l.state.running && l.age_ms != null && l.age_ms < 5000;
+async function pastille() {
+  try { $('#livedot').classList.toggle('on', enDirect(await api('/api/live'))); } catch (e) { /* hors ligne */ }
+}
+pastille(); setInterval(pastille, 3000);
+
+// ─── Direct ───────────────────────────────────────────────────────────────────
+
+async function vueDirect() {
+  let stop = false;
+  cleanup = () => { stop = true; };
+  app.innerHTML = '<h1>Direct</h1><p class="sub" id="lsub">En attente du téléphone…</p><div id="lbody"></div>';
+  let built = false;
+  while (!stop) {
+    let l = null;
+    try { l = await api('/api/live'); } catch (e) { /* réessai */ }
+    if (stop) break;
+    const s = l && l.state, on = l && enDirect(l);
+    $('#livedot').classList.toggle('on', !!on);
+    const sub = $('#lsub'), body = $('#lbody');
+    if (!s || !on) {
+      sub.textContent = s && l.age_ms != null
+        ? `Pas de show en cours. Dernier signal ${quand(Date.now() - l.age_ms)}${s.status ? ' (' + s.status + ')' : ''}.`
+        : 'Pas de show en cours. Lance Go sur le téléphone (Tailscale allumé, envoi activé dans Réglages).';
+      body.innerHTML = ''; built = false;
+    } else {
+      sub.innerHTML = `<span style="color:var(--live)">●</span> ${esc(s.status)} sur ${esc(s.area)}${s.session ? ` · <a href="#/s/${encodeURIComponent(s.session)}">session</a>` : ''}`;
+      if (!built) {
+        body.innerHTML = `<div class="live">
+          <div class="room" id="room"></div>
+          <div class="card panel">
+            <div><div class="label">Morceau</div><div id="ltrack" style="font-size:17px;font-weight:600"></div><div class="sub" id="lartist"></div></div>
+            <div class="kv">
+              <div><span class="label">BPM</span><b id="lbpm"></b></div>
+              <div><span class="label">Mesure</span><b id="lbar"></b></div>
+              <div><span class="label">Drops</span><b id="ldrops"></b></div>
+            </div>
+            <div class="beats" id="lbeats">${'<i></i>'.repeat(4)}</div>
+            <div><div class="label">Moment</div><div id="lfig" style="font-size:15px"></div><div class="sub" id="lmode"></div></div>
+            <div><div class="label">Montée</div><div class="meter"><i id="lten"></i></div></div>
+            <div><div class="label">Niveau</div><div class="meter"><i id="llev" style="background:var(--text)"></i></div></div>
+          </div></div>`;
+        const plan = s.plan || [];
+        $('#room').innerHTML = `<div class="sofa" style="left:50%;top:50%">canapé</div>` + plan.map(p =>
+          `<div class="lamp" style="left:${50 + p.x * 40}%;top:${50 - p.y * 40}%"><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
+        built = true;
+      }
+      $('#ltrack').textContent = s.title || 'Morceau inconnu';
+      $('#lartist').textContent = [s.artist, s.mood, s.position != null ? mmss(s.position) : null].filter(Boolean).join(' · ');
+      $('#lbpm').textContent = s.bpm ? Math.round(s.bpm) : '–';
+      $('#lbar').textContent = s.barInPhrase ? `${s.barInPhrase}/8` : '–';
+      $('#ldrops').textContent = s.drops;
+      document.querySelectorAll('#lbeats i').forEach((b, i) => b.classList.toggle('on', i < s.beatInBar));
+      $('#lfig').textContent = s.figure || '–';
+      $('#lmode').textContent = s.mode || '';
+      $('#lten').style.width = `${Math.round(Math.min(1, s.tension || 0) * 100)}%`;
+      $('#llev').style.width = `${Math.round(Math.min(1, s.level || 0) * 100)}%`;
+      for (const [ch, c] of Object.entries(s.lamps || {})) {
+        const el = $('#lamp' + ch); if (el) { el.style.background = c; el.style.boxShadow = `0 0 24px ${c}`; }
+      }
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
