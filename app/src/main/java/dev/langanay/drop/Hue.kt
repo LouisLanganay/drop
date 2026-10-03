@@ -26,7 +26,7 @@ const val TAG = "Drop"
 data class Channel(val id: Int, val x: Float, val y: Float, val z: Float)
 data class EntArea(val id: String, val name: String, val active: Boolean, val channels: List<Channel>)
 /** Une lampe de la zone pour le plan de l'écran : son canal, son nom dans l'app Hue, sa position, et si c'est un ruban. */
-data class Lamp(val channel: Int, val name: String, val x: Float, val y: Float, val strip: Boolean)
+data class Lamp(val channel: Int, val name: String, val x: Float, val y: Float, val strip: Boolean, val play: Boolean = false)
 class HueException(msg: String) : Exception(msg)
 
 /** Message à afficher : celui du pont s'il en donne un, sinon le cas courant d'un pont hors de portée. */
@@ -141,7 +141,7 @@ class HueBridge(private val ip: String) {
         val owners = list("entertainment", username).associate { it.getString("id") to it.getJSONObject("owner").getString("rid") }
         val devices = list("device", username).associateBy { it.getString("id") }
         val chs = cfg.optJSONArray("channels") ?: JSONArray()
-        val info = HashMap<Int, Pair<String, Boolean>>()
+        val info = HashMap<Int, Triple<String, Boolean, Boolean>>()
         for (i in 0 until chs.length()) {
             val ch = chs.getJSONObject(i)
             val mem = ch.optJSONArray("members") ?: continue
@@ -150,9 +150,9 @@ class HueBridge(private val ip: String) {
             val name = dev.optJSONObject("metadata")?.optString("name").orEmpty()
             val type = dev.optJSONObject("product_data")?.optString("product_archetype").orEmpty() + " " +
                 dev.optJSONObject("metadata")?.optString("archetype").orEmpty()
-            info[ch.getInt("channel_id")] = name to type.contains("strip")
+            info[ch.getInt("channel_id")] = Triple(name, type.contains("strip"), type.contains("play") || name.contains("play", ignoreCase = true))
         }
-        return fallback.map { l -> info[l.channel]?.let { (n, s) -> l.copy(name = n.ifBlank { l.name }, strip = s) } ?: l }
+        return fallback.map { l -> info[l.channel]?.let { (n, s, p) -> l.copy(name = n.ifBlank { l.name }, strip = s && !p, play = p) } ?: l }
     }
 
     fun fadeOff(username: String, lights: List<String>, ms: Int) {

@@ -553,6 +553,12 @@ private fun PlanSalon(zone: String, lamps: List<Lamp>, state: LiveState, modifie
         fun py(y: Float) = oy + sy * (maxY - y.coerceIn(-1f, 1f))
         val cx0 = px(0f)
         val cy0 = py(0f)
+        // Le canapé est adossé au mur du fond : le mur passe juste derrière lui, d'un bord à l'autre du plan.
+        Box(
+            Modifier.offset(16.dp, cy0 + 23.dp).size(w - 32.dp, 3.dp).clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.22f)),
+        )
+        Text("MUR", Modifier.align(Alignment.TopEnd).offset((-16).dp, cy0 + 30.dp), style = Etiquette.copy(color = Tertiaire, fontSize = 10.sp))
         Box(
             Modifier.offset(cx0 - 56.dp, cy0 - 22.dp).size(112.dp, 44.dp).clip(RoundedCornerShape(14.dp))
                 .background(Color.White.copy(alpha = 0.04f)).border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp)),
@@ -585,9 +591,10 @@ private fun Lampe(lamp: Lamp, cible: Color?, cx: Dp, cy: Dp, nomDessus: Boolean 
     val allumee = cible != null && force > 0.08f
     // Couleur pleine (la luminosité se lit dans la taille du halo), pour que l'ampoule ne vire pas au gris.
     val vive = if (force > 0f) Color(c.red / force, c.green / force, c.blue / force) else c
-    val lw = if (lamp.strip) 150.dp else 28.dp
-    val lh = if (lamp.strip) 10.dp else 28.dp
-    val forme = RoundedCornerShape(if (lamp.strip) 5.dp else 14.dp)
+    // Le Hue Play est une barre posée debout, le bandeau une longue barre, les autres des ampoules.
+    val lw = when { lamp.strip -> 150.dp; lamp.play -> 14.dp; else -> 28.dp }
+    val lh = when { lamp.strip -> 10.dp; lamp.play -> 40.dp; else -> 28.dp }
+    val forme = RoundedCornerShape(if (lamp.strip) 5.dp else if (lamp.play) 4.dp else 14.dp)
     Box(
         Modifier.offset(cx - lw / 2, cy - lh / 2).size(lw, lh)
             .drawBehind {

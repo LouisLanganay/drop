@@ -68,13 +68,35 @@ async function pastille() {
   try { const l = await api('/api/live'); $('#livedot').classList.toggle('on', enDirect(l)); teinte(l); } catch (e) { /* hors ligne */ }
 }
 pastille(); setInterval(pastille, 3000);
-// Le fond prend les couleurs de la pochette pendant le show, et revient au gris à l'arrêt.
+// Le fond : une couche par ambiance (pochette floutée et lumières de sa palette pendant le show, gris au repos).
+// Une nouvelle ambiance monte par-dessus l'ancienne, qui s'efface : les deux se mélangent en dégradé.
+let ambCle = null;
 function teinte(l) {
   const s = l && l.state, on = enDirect(l);
   const ok = c => c && c !== '#000000';
-  document.body.style.setProperty('--c1', on && ok(s.lead) ? s.lead : '#3a3a48');
-  document.body.style.setProperty('--c2', on && ok(s.second) ? s.second : '#26323a');
+  let cle = 'repos', cols = ['#3a3a48', '#26323a', '#3a3a48'], img = null;
+  if (on) {
+    const pal = (s.palette || []).filter(ok);
+    cols = [pal[0] || (ok(s.lead) ? s.lead : '#3a3a48'), pal[1] || (ok(s.second) ? s.second : '#26323a'), pal[2] || pal[0] || s.lead || '#3a3a48'];
+    img = s.cover ? '/api/cover?key=' + encodeURIComponent(s.cover) : null;
+    cle = s.cover || cols.join();
+  }
+  document.body.style.setProperty('--glow', on ? cols[0] + '99' : 'rgb(0 0 0 / .6)');
+  if (cle === ambCle) return;
+  ambCle = cle;
+  const box = $('#ambient');
+  const c = document.createElement('div');
+  c.className = 'amb';
+  c.innerHTML = (img ? `<img alt="" src="${img}">` : '') + cols.map(x => `<i style="background:${x}"></i>`).join('');
+  box.appendChild(c);
+  const monte = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+    c.classList.add('on');
+    [...box.children].filter(x => x !== c).forEach(x => { x.classList.remove('on'); setTimeout(() => x.remove(), 2800); });
+  }));
+  const im = c.querySelector('img');
+  if (im && !im.complete) { im.onload = monte; im.onerror = monte; } else monte();
 }
+teinte(null);
 
 // ─── Direct ───────────────────────────────────────────────────────────────────
 
@@ -88,12 +110,15 @@ async function vueDirect() {
   app.innerHTML = `<div class="top"><h1 style="flex:1">Direct</h1>
       <div class="seg lens" id="fen"><button data-f="30" class="on">30 s</button><button data-f="120">2 min</button></div></div>
     <p class="sub" id="lsub">En attente du téléphone…</p>
-    <div id="lres" class="card panel" style="margin-top:12px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 16px"></div>
-    <div class="live">
+    <div class="hero">
       <div class="room" id="room"></div>
+      <div class="coverbox">
+        <div class="cover" id="cover"><div class="vide">Pas de pochette</div></div>
+        <div><div class="t" id="ltrack">–</div><div class="a" id="lartist"></div></div>
+        <div class="sub" id="lmem" style="font-size:13px"></div>
+      </div>
       <div class="card panel">
-        <div><div class="label">Morceau</div><div id="ltrack" style="font-size:17px;font-weight:600">–</div><div class="sub" id="lartist"></div></div>
-        <div class="sub" id="lmem"></div>
+        <div><div class="label" id="lmoment">Moment</div><div id="lfig" style="font-size:22px;font-weight:600;letter-spacing:-.02em">–</div><div class="sub" id="lmood"></div></div>
         <div class="kv">
           <div><span class="label">BPM</span><b id="lbpm">–</b></div>
           <div><span class="label">Mesure</span><b id="lbar">–</b></div>
@@ -104,7 +129,7 @@ async function vueDirect() {
         <div><div class="label">Niveau</div><div class="meter"><i id="llev" style="background:var(--text)"></i></div></div>
       </div>
     </div>
-    <div class="card" style="margin-top:16px;overflow:hidden"><canvas id="lgraph" style="height:620px;cursor:pointer"></canvas></div>
+    <div class="card graph" style="margin-top:16px;overflow:hidden"><canvas id="lgraph" style="height:620px;cursor:pointer"></canvas></div>
     <p class="hint" id="lhint" style="margin-top:8px">Clique sur le graphe pour le figer.</p>`;
   document.querySelectorAll('#fen button').forEach(b => b.onclick = () => {
     fen = +b.dataset.f; document.querySelectorAll('#fen button').forEach(x => x.classList.toggle('on', x === b));
@@ -163,10 +188,11 @@ async function vueDirect() {
       ? `<span style="color:var(--live)">●</span> ${esc(st.status)} sur ${esc(st.area)}${st.session ? ` · <a href="#/s/${encodeURIComponent(st.session)}">session</a>` : ''}`
       : `Pas de show en cours. Dernier signal ${quand(Date.now() - age)}. Le graphe garde le dernier show.`;
     const fort = ['Montée', 'DROP', 'Stroboscope'].includes(st.mode);
-    $('#lres').innerHTML = on ? `<b style="font-size:15px;color:${fort ? st.lead : 'var(--text)'}">${esc(st.mode === 'DROP' || st.mode === 'Stroboscope' ? 'Drop' : st.mode)}</b>
-      <span class="sub" style="font-size:15px">${esc(st.figureName || st.figure || '')}</span><span class="grow"></span>
-      <span class="mono" style="color:var(--dim);font-size:12px">${Math.round(st.bpm)} BPM · ${Math.min(8, Math.max(1, st.barInPhrase))}/8 · T${Math.min(4, Math.max(1, st.beatInBar))}${st.mood ? ' · ' + esc(st.mood) : ''}</span>`
-      : '<span class="sub">Arrêté.</span>';
+    $('#lmoment').textContent = on ? (st.mode === 'DROP' || st.mode === 'Stroboscope' ? 'Drop' : st.mode) : 'Arrêté';
+    $('#lmoment').style.color = on && fort ? st.lead : '';
+    $('#lfig').textContent = on ? (st.figureName || st.figure || '–') : '–';
+    $('#lmood').textContent = on && st.mood ? st.mood : '';
+    pochette(on && st.cover ? st.cover : null);
     $('#ltrack').textContent = st.title || 'Morceau inconnu';
     $('#lartist').textContent = [st.artist, st.position != null ? mmss(st.position) : null].filter(Boolean).join(' · ');
     $('#lmem').textContent = !st.title ? '' : st.memory == null ? 'Morceau pas encore connu : il le sera après une écoute en entier.'
@@ -182,8 +208,8 @@ async function vueDirect() {
     const cle = plan.map(p => p.ch + p.name).join();
     if (cle !== planCle) {
       planCle = cle;
-      $('#room').innerHTML = `<div class="sofa" style="left:50%;top:50%">canapé</div>` + plan.map(p =>
-        `<div class="lamp${(p.strip ?? /bandeau|strip|ruban/i.test(p.name)) ? ' strip' : ''}" style="left:${Math.min(84, Math.max(16, 50 + p.x * 34))}%;top:${Math.min(80, Math.max(16, 50 - p.y * 40))}%"><b></b><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
+      $('#room').innerHTML = `<div class="wall"></div><div class="sofa" style="left:50%;top:72%">canapé</div>` + plan.map(p =>
+        `<div class="lamp${(p.play ?? /play/i.test(p.name)) ? ' play' : (p.strip ?? /bandeau|strip|ruban/i.test(p.name)) ? ' strip' : ''}" style="left:${Math.min(84, Math.max(16, 50 + p.x * 34))}%;top:${Math.min(76, Math.max(12, 72 - p.y * 85))}%"><b></b><i id="lamp${p.ch}"></i><span>${esc(p.name)}</span></div>`).join('');
     }
     // Couleur pleine sur l'ampoule, intensité dans le halo et la lumière répandue.
     for (const [ch, c] of Object.entries(st.lamps || {})) {
@@ -198,11 +224,38 @@ async function vueDirect() {
 
   }
 
+  // La pochette au centre : la nouvelle arrive floue et un peu grande, puis se pose nette ; l'ancienne recule
+  // et se dissout dessous.
+  let coverCle;
+  function pochette(cle) {
+    if (cle === coverCle) return;
+    coverCle = cle;
+    const box = $('#cover');
+    const vieilles = [...box.querySelectorAll('img')];
+    const sortir = () => vieilles.forEach(x => { x.classList.remove('show'); x.classList.add('out'); setTimeout(() => x.remove(), 1100); });
+    if (!cle) { sortir(); box.querySelector('.vide').style.display = ''; return; }
+    const im = new Image();
+    im.alt = 'Pochette';
+    im.onload = () => {
+      box.querySelector('.vide').style.display = 'none';
+      box.appendChild(im);
+      requestAnimationFrame(() => requestAnimationFrame(() => { im.classList.add('show'); sortir(); }));
+    };
+    im.onerror = () => { if (coverCle === cle) coverCle = undefined; };
+    im.src = '/api/cover?key=' + encodeURIComponent(cle);
+  }
+
   const MOMENTS = ['Silence', 'Calme', 'Groove', 'Énergie', 'Montée', 'Drop'];
   const momentDe = m => m === 6 ? 5 : m;
 
-  function dessine() {
+  let derniere = 0, signature = '';
+  function dessine(ts) {
     raf = requestAnimationFrame(dessine);
+    if (ts - derniere < 33) return;
+    const vivantSig = fige == null && st && st.running && age < 5000;
+    const sig = `${tl.t.length}|${tl.t[tl.t.length - 1]}|${fen}|${fige}|${cv.clientWidth}|${vivantSig}`;
+    if (!vivantSig && sig === signature) return;
+    signature = sig; derniere = ts;
     const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
     const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -262,11 +315,17 @@ async function vueDirect() {
       g.save(); g.beginPath(); g.rect(0, 0, gauche - 8, H); g.clip(); txt(lp.name, 12, ly + 4, C.dim); g.restore();
       rr(gauche, ly, pw, hL, 3, 'rgba(255,255,255,.03)');
       const a = tl.lamps[lp.ch]; if (!a) return;
-      for (let i = i0; i < i1; i++) {
-        const x0 = X(tl.t[i]), x1 = i + 1 < n ? X(tl.t[i + 1]) : x0 + 2;
+      // Un rectangle par plage de même couleur, pas un par échantillon.
+      let i = i0;
+      while (i < i1) {
         const strobe = tl.mode[i] === 6, c = strobe ? 'rgba(255,255,255,.85)' : a[i];
-        if (!c || c === '#000000') continue;
-        g.fillStyle = c; g.fillRect(Math.max(gauche, x0), ly, Math.min(droite, x1 + .5) - Math.max(gauche, x0), hL);
+        let j = i + 1;
+        while (j < i1 && (tl.mode[j] === 6 ? 'rgba(255,255,255,.85)' : a[j]) === c) j++;
+        if (c && c !== '#000000') {
+          const x0 = Math.max(gauche, X(tl.t[i])), x1 = Math.min(droite, j < n ? X(tl.t[j]) : X(tl.t[j - 1]) + 2);
+          g.fillStyle = c; g.fillRect(x0, ly, x1 - x0 + .5, hL);
+        }
+        i = j;
       }
     });
 

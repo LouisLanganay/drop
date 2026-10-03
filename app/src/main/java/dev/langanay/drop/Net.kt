@@ -177,7 +177,7 @@ object LivePush {
             .put("lead", hex(s.lead)).put("second", hex(s.second)).put("lastStrobe", s.lastStrobe.toDouble())
             .put("lamps", JSONObject().apply { s.lamps.forEach { (k, v) -> put(k.toString(), hex(v)) } })
             .put("plan", org.json.JSONArray().apply {
-                lamps.forEach { put(JSONObject().put("ch", it.channel).put("name", it.name).put("strip", it.strip).put("x", it.x.toDouble()).put("y", it.y.toDouble())) }
+                lamps.forEach { put(JSONObject().put("ch", it.channel).put("name", it.name).put("strip", it.strip).put("play", it.play).put("x", it.x.toDouble()).put("y", it.y.toDouble())) }
             })
             .put("title", tr?.title ?: JSONObject.NULL).put("artist", tr?.artist ?: JSONObject.NULL)
             .put("position", NowPlaying.positionSec() ?: JSONObject.NULL)
@@ -185,8 +185,15 @@ object LivePush {
             .put("figureName", FIGURES[s.figure]?.first ?: s.figure)
             .put("memory", TrackMemory.drops(tr?.let { TrackMemory.key(it.artist, it.title) })?.let { org.json.JSONArray(it) } ?: JSONObject.NULL)
             .put("timeline", timeline())
+            .put("cover", tr?.takeIf { it.art != null }?.let { TrackMemory.key(it.artist, it.title) } ?: JSONObject.NULL)
+            .put("palette", org.json.JSONArray().apply {
+                tr?.colors?.forEach { c -> put("#%02X%02X%02X".format((c[0].coerceIn(0f, 1f) * 255).toInt(), (c[1].coerceIn(0f, 1f) * 255).toInt(), (c[2].coerceIn(0f, 1f) * 255).toInt())) }
+            })
+        val art = tr?.art
+        val coverKey = tr?.let { TrackMemory.key(it.artist, it.title) }
         exec.execute {
             try {
+                if (art != null && coverKey != null) envoyerPochette(art, coverKey)
                 // Envoi raté : la frise repartira de là au prochain envoi, rien ne manque côté dashboard.
                 val ok = runCatching { http("POST", "/api/live", o.toString().toByteArray()).first == 200 }.getOrDefault(false)
                 if (!ok) synchronized(Timeline) { lastT = prevT; lastMark = prevMark }
@@ -195,6 +202,21 @@ object LivePush {
     }
 
     private fun hex(c: Int) = "#%06X".format(c and 0xFFFFFF)
+
+    /** Pochette déjà envoyée (même image) : elle ne repart qu'au changement de morceau. */
+    @Volatile private var coverSent: android.graphics.Bitmap? = null
+
+    private fun envoyerPochette(art: android.graphics.Bitmap, key: String) {
+        if (art === coverSent) return
+        val out = java.io.ByteArrayOutputStream()
+        val side = 640
+        val b = if (art.width > side) android.graphics.Bitmap.createScaledBitmap(art, side, art.height * side / art.width, true) else art
+        b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, out)
+        val ok = runCatching {
+            http("POST", "/api/cover?key=${URLEncoder.encode(key, "UTF-8")}", out.toByteArray(), "image/jpeg").first == 200
+        }.getOrDefault(false)
+        if (ok) coverSent = art
+    }
 }
 
 /**

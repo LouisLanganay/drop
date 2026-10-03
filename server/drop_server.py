@@ -307,6 +307,8 @@ LIVE_KEEP = 130.0
 COLS = ("t", "level", "bass", "tension", "intensity", "mode", "fx")
 live = {"state": None, "at": 0, "key": None, "tl": {}, "lamps": {}, "marks": [], "mark_seq": 0}
 live_lock = threading.Lock()
+# Pochettes des derniers morceaux du direct (clé du morceau → JPEG), en mémoire.
+covers = {}
 
 
 def live_reset(key):
@@ -423,11 +425,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, session_series(m.group(1), float(q.get("from", 0)), float(q.get("to", 1e9)), min(4000, int(q.get("n", 1500)))))
                 if path == "/api/tracks":
                     return self._send(200, tracks_list())
+                if path == "/api/cover":
+                    data = covers.get(q.get("key", ""))
+                    if not data:
+                        return self._send(404, {"error": "pas de pochette"})
+                    return self._send(200, data, "image/jpeg")
                 if path == "/api/live":
                     return self._send(200, live_view(float(q["since"]) if "since" in q else None, int(q.get("since_mark", 0))))
                 if path == "/api/calibration":
                     return self._send(200, calibration())
             if method == "POST":
+                if path == "/api/cover":
+                    data = self._body()
+                    if not data or len(data) > 2_000_000:
+                        return self._send(400, {"error": "pochette invalide"})
+                    covers[q.get("key", "")] = data
+                    while len(covers) > 30:
+                        covers.pop(next(iter(covers)))
+                    return self._send(200, {"ok": True})
                 if path == "/api/live":
                     live_ingest(json.loads(self._body() or b"{}"))
                     return self._send(200, {"ok": True})
