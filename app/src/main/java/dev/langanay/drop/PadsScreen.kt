@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -129,20 +131,20 @@ internal fun PadsScreen(lamps: List<Lamp>, onBack: () -> Unit) {
             if (avance) {
                 // Fader du fond, lampes au doigt, côtés et coup, puis figures, vitesse et déclencheurs.
                 Fader(Modifier.width(56.dp).fillMaxHeight(), accent)
-                Column(Modifier.weight(1.6f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(2.4f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val ordre = lamps.sortedBy { it.x }
                     for (ligne in ordre.chunked(2)) {
-                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            for (l in ligne) PadMaintenu(l.name, "lampe", accent, Modifier.weight(1f)) { if (it) Pads.lampes += l.channel else Pads.lampes -= l.channel }
+                        Row(Modifier.weight(1.5f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (l in ligne) PadLampe(l.name, accent, Modifier.weight(1f)) { if (it == null) Pads.lampes -= l.channel else Pads.lampes[l.channel] = it }
                         }
                     }
-                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PadMaintenu("Gauche", "maintenir", accent, Modifier.weight(1f)) { Pads.gauche = it }
                         PadCoup("Hit", "un coup", accent, Modifier.weight(1f)) { Pads.hit = true }
                         PadMaintenu("Droite", "maintenir", accent, Modifier.weight(1f)) { Pads.droite = it }
                     }
                 }
-                Column(Modifier.weight(2f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1.8f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     for (ligne in FIGURES_PADS.chunked(3)) {
                         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             for ((f, nom) in ligne) {
@@ -233,9 +235,45 @@ private fun PadMaintenu(nom: String, sous: String, couleur: Color, modifier: Mod
     ) { Etiquettes(nom, sous, if (appuye && couleur.red + couleur.green + couleur.blue > 1.5f) Fond else Texte) }
 }
 
+/**
+ * Lampe tenue au doigt : pleine à l'appui, glisser vers le bas baisse sa luminosité (jusqu'au noir), lâcher la rend
+ * à la figure. Chaque appui repart de 100 %. null = relâchée.
+ */
+@Composable
+private fun PadLampe(nom: String, couleur: Color, modifier: Modifier, onChange: (Float?) -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    var niveau by remember { mutableStateOf<Float?>(null) }
+    Box(
+        modifier.fillMaxHeight().clip(RoundedCornerShape(20.dp))
+            .verre(20.dp, teinte = if (niveau != null) couleur.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.06f))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    val y0 = down.position.y
+                    niveau = 1f; onChange(1f)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    while (true) {
+                        val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) break
+                        c.consume()
+                        val v = (1f - (c.position.y - y0) / (size.height * 0.8f)).coerceIn(0f, 1f)
+                        if (v != niveau) { niveau = v; onChange(v) }
+                    }
+                    niveau = null; onChange(null)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val v = niveau
+        if (v != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(v).background(couleur.copy(alpha = 0.75f)))
+        Etiquettes(nom, if (v != null) "${(v * 100).roundToInt()} %" else "glisser ↓ pour baisser", if (v != null && v > 0.5f && couleur.red + couleur.green + couleur.blue > 1.5f) Fond else Texte)
+    }
+}
+
 /** Pad qui reste allumé jusqu'au prochain appui. */
 @Composable
-private fun PadBascule(nom: String, actif: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun PadBascule(nom: String, actif: Boolean, accent: Color, modifier: Modifier, sous: String? = null, onClick: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     Box(
         modifier.fillMaxHeight()
@@ -243,7 +281,7 @@ private fun PadBascule(nom: String, actif: Boolean, accent: Color, modifier: Mod
             .clip(RoundedCornerShape(20.dp))
             .clickable(role = Role.Button, onClickLabel = nom) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() },
         contentAlignment = Alignment.Center,
-    ) { Etiquettes(nom, if (actif) "verrouillée" else "figure", if (actif) Fond else Texte) }
+    ) { Etiquettes(nom, sous ?: if (actif) "verrouillée" else "figure", if (actif) Fond else Texte) }
 }
 
 /** Pad qui déclenche une fois, avec un éclair de la couleur du morceau au toucher. */
@@ -296,18 +334,12 @@ private fun Fader(modifier: Modifier, accent: Color) {
     }
 }
 
-/** Vitesse des figures : ×1, ×2, ×4 pas par temps. */
+/** Vitesse des figures : un appui passe de normale à double puis quadruple (pas par temps), et revient. */
 @Composable
 private fun Vitesse(modifier: Modifier, accent: Color) {
     var v by remember { mutableStateOf(Pads.vitesse) }
-    Column(modifier.fillMaxHeight().verre(20.dp, lentille = false).padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (x in listOf(1, 2, 4)) {
-            Box(
-                Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(14.dp))
-                    .background(if (v == x) accent.copy(alpha = 0.85f) else Color.Transparent)
-                    .clickable(role = Role.RadioButton, onClickLabel = "Vitesse $x") { v = x; Pads.vitesse = x },
-                contentAlignment = Alignment.Center,
-            ) { Text("×$x", style = corps(15, FontWeight.SemiBold, color = if (v == x) Fond else Texte)) }
-        }
+    val nom = when (v) { 2 -> "Double"; 4 -> "Quadruple"; else -> "Normale" }
+    PadBascule(nom, v > 1, accent, modifier, sous = "vitesse figures") {
+        v = when (v) { 1 -> 2; 2 -> 4; else -> 1 }; Pads.vitesse = v
     }
 }

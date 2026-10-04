@@ -57,10 +57,10 @@ object Pads {
     @Volatile var avance = false
     /** Niveau du fond (fader), de 0 (noir) à 1. */
     @Volatile var niveau = 0.25f
-    /** Vitesse des figures : 1, 2 ou 4 pas par temps. */
+    /** Vitesse des figures : 1, 2 ou 4 pas par temps (normale, double, quadruple). */
     @Volatile var vitesse = 1
-    /** Lampes tenues au doigt (canaux). */
-    val lampes: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** Lampes tenues au doigt : canal vers luminosité (1 à l'appui, baissée en glissant vers le bas). */
+    val lampes: MutableMap<Int, Float> = java.util.concurrent.ConcurrentHashMap()
     @Volatile var gauche = false
     @Volatile var droite = false
     /** Dernier coup du pad Hit (horloge du show), traité à l'image suivante. */
@@ -406,8 +406,9 @@ class Effects(channels: List<Channel>) {
             if (avance) {
                 val coup = exp(-(now - hitAt) / max(0.12, period * 0.4)).toFloat()
                 if (coup > 0.02f) { target = FloatArray(3) { c -> max(target[c], a[c] * coup) }; if (now - hitAt < 0.03) instant = true }
-                val tenue = ch.id in Pads.lampes || (Pads.gauche && sd <= 0) || (Pads.droite && sd >= 0)
-                if (tenue) { instant = true; target = p }
+                val doigt = Pads.lampes[ch.id]
+                if (doigt != null) { instant = true; target = scale(p, doigt) }
+                else if ((Pads.gauche && sd <= 0) || (Pads.droite && sd >= 0)) { instant = true; target = p }
             }
             // Pads maintenus : noir, flash, stroboscope, nets, par-dessus tout le reste.
             when {
