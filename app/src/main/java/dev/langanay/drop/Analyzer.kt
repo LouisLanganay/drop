@@ -431,6 +431,9 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
 
     /** Autocorrélation des attaques sur 6 s, préférence douce autour de 122 BPM pour lever l'ambiguïté d'octave. */
     private fun estimateTempo() {
+        // Tempo tapé au doigt (pads) : il remplace l'estimation tant qu'Auto ne l'a pas rendu.
+        val tap = Pads.tapBpm
+        if (tap > 0f) { bpm = tap; conf = max(conf, 0.6f); candidateHits = 0; return }
         var m = 0f
         for (v in env) m += v
         m /= envLen
@@ -487,6 +490,13 @@ class Analyzer(private val sampleRate: Int, private val hop: Int, private val em
      */
     private fun trackBeat(t: Double, onset: Boolean, onsetTime: Double) {
         val period = 60.0 / bpm
+        if (Pads.tapSync) {
+            // Un tap est un temps : la phase repart de lui.
+            Pads.tapSync = false
+            if (t - lastBeatEmitted > 0.25 * period) fire(t, period)
+            beatTime = t
+            return
+        }
         if (beatTime < 0) {
             if (onset && conf > 0.08f) { beatTime = onsetTime; fire(onsetTime, period) }
             return

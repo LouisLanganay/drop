@@ -59,10 +59,16 @@ object Pads {
     @Volatile var niveau = 0.25f
     /** Vitesse des figures : 1, 2 ou 4 pas par temps (normale, double, quadruple). */
     @Volatile var vitesse = 1
-    /** Lampes tenues au doigt : canal vers luminosité (1 à l'appui, baissée en glissant vers le bas). */
-    val lampes: MutableMap<Int, Float> = java.util.concurrent.ConcurrentHashMap()
-    @Volatile var gauche = false
-    @Volatile var droite = false
+    /** Groupes tenus au doigt, luminosité de 0 à 1 (1 à l'appui, baissée en glissant vers le bas), -1 = relâché. */
+    @Volatile var gauche = -1f
+    @Volatile var droite = -1f
+    @Volatile var devant = -1f
+    @Volatile var derriere = -1f
+    /** Flash du mode avancé : blanc qui retombe, traité à l'image suivante. */
+    @Volatile var flashCoup = false
+    /** Tempo tapé au doigt (BPM, 0 = celui de l'analyse) et temps à recaler sur le dernier tap. */
+    @Volatile var tapBpm = 0f
+    @Volatile var tapSync = false
     /** Dernier coup du pad Hit (horloge du show), traité à l'image suivante. */
     @Volatile var hit = false
 
@@ -72,6 +78,7 @@ object Pads {
         noir = false
         strobe = false
         flash = false
+        tapBpm = 0f
     }
 }
 
@@ -104,6 +111,10 @@ class Effects(channels: List<Channel>) {
             i < byX.size / 2 -> -1
             else -> 1
         }
+    }
+    // Devant (vers l'avant du canapé) et derrière : moitié haute et moitié basse en y.
+    private val byY = channels.sortedBy { it.y }
+    private val devant = byY.withIndex().associate { (i, c) -> c.id to (i >= byY.size / 2)
     }
     private val shown = HashMap<Int, FloatArray>()
     private val events = ConcurrentLinkedQueue<AudioEvent>()
@@ -152,6 +163,8 @@ class Effects(channels: List<Channel>) {
     private var padRiseAt = -100.0
     private var padRiseUntil = -100.0
     private var hitAt = -100.0
+    private var flashAt = -100.0
+    private val lisse = HashMap<Int, Float>()
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
     @Volatile private var testRequested = false
@@ -242,6 +255,10 @@ class Effects(channels: List<Channel>) {
         if (Pads.hit) {
             Pads.hit = false
             hitAt = now
+        }
+        if (Pads.flashCoup) {
+            Pads.flashCoup = false
+            flashAt = now
         }
         val avance = Pads.avance
         val rapide = if (avance) Pads.vitesse >= 2 else fast
@@ -406,9 +423,21 @@ class Effects(channels: List<Channel>) {
             if (avance) {
                 val coup = exp(-(now - hitAt) / max(0.12, period * 0.4)).toFloat()
                 if (coup > 0.02f) { target = FloatArray(3) { c -> max(target[c], a[c] * coup) }; if (now - hitAt < 0.03) instant = true }
-                val doigt = Pads.lampes[ch.id]
-                if (doigt != null) { instant = true; target = scale(p, doigt) }
-                else if ((Pads.gauche && sd <= 0) || (Pads.droite && sd >= 0)) { instant = true; target = p }
+                // Groupes tenus : la luminosité la plus haute des groupes qui contiennent la lampe.
+                val av = devant[ch.id] == true
+                val doigt = maxOf(
+                    if (sd <= 0) Pads.gauche else -1f, if (sd >= 0) Pads.droite else -1f,
+                    if (av) Pads.devant else -1f, if (!av) Pads.derriere else -1f,
+                )
+                // Lissage façon crossfader : le doigt tremble, la lampe glisse vers sa valeur (~150 ms). Un nouvel
+                // appui part de sa valeur sans attendre.
+                val avant = lisse[ch.id] ?: -1f
+                val v = if (doigt < 0f || avant < 0f) doigt else avant + (doigt - avant) * 0.13f
+                lisse[ch.id] = v
+                if (v >= 0f) { instant = true; target = scale(p, v) }
+                // Flash : blanc plein qui retombe en un quart de seconde.
+                val fl = exp(-(now - flashAt) / 0.22).toFloat()
+                if (fl > 0.02f) { target = FloatArray(3) { c -> max(target[c], fl) }; if (now - flashAt < 0.03) instant = true }
             }
             // Pads maintenus : noir, flash, stroboscope, nets, par-dessus tout le reste.
             when {

@@ -74,7 +74,7 @@ internal fun PadsScreen(lamps: List<Lamp>, onBack: () -> Unit) {
         act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
             Pads.noir = false; Pads.flash = false; Pads.strobe = false
-            Pads.gauche = false; Pads.droite = false; Pads.lampes.clear()
+            Pads.gauche = -1f; Pads.droite = -1f; Pads.devant = -1f; Pads.derriere = -1f
             act?.requestedOrientation = avant ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
@@ -132,16 +132,17 @@ internal fun PadsScreen(lamps: List<Lamp>, onBack: () -> Unit) {
                 // Fader du fond, lampes au doigt, côtés et coup, puis figures, vitesse et déclencheurs.
                 Fader(Modifier.width(56.dp).fillMaxHeight(), accent)
                 Column(Modifier.weight(2.4f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val ordre = lamps.sortedBy { it.x }
-                    for (ligne in ordre.chunked(2)) {
-                        Row(Modifier.weight(1.5f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            for (l in ligne) PadLampe(l.name, accent, Modifier.weight(1f)) { if (it == null) Pads.lampes -= l.channel else Pads.lampes[l.channel] = it }
-                        }
+                    Row(Modifier.weight(1.5f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PadGroupe("Gauche", accent, Modifier.weight(1f)) { Pads.gauche = it }
+                        PadGroupe("Droite", accent, Modifier.weight(1f)) { Pads.droite = it }
+                    }
+                    Row(Modifier.weight(1.5f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PadGroupe("Devant", accent, Modifier.weight(1f)) { Pads.devant = it }
+                        PadGroupe("Derrière", accent, Modifier.weight(1f)) { Pads.derriere = it }
                     }
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PadMaintenu("Gauche", "maintenir", accent, Modifier.weight(1f)) { Pads.gauche = it }
+                        PadTap(accent, state.bpm, Modifier.weight(1f))
                         PadCoup("Hit", "un coup", accent, Modifier.weight(1f)) { Pads.hit = true }
-                        PadMaintenu("Droite", "maintenir", accent, Modifier.weight(1f)) { Pads.droite = it }
                     }
                 }
                 Column(Modifier.weight(1.8f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -164,7 +165,7 @@ internal fun PadsScreen(lamps: List<Lamp>, onBack: () -> Unit) {
                 Column(Modifier.weight(0.8f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     PadMaintenu("Noir", "maintenir", Color(0xFF26262C), Modifier.weight(1f)) { Pads.noir = it }
                     PadMaintenu("Strobo", "maintenir", Color.White, Modifier.weight(1f)) { Pads.strobe = it }
-                    PadMaintenu("Flash", "maintenir", Color.White, Modifier.weight(1f)) { Pads.flash = it }
+                    PadCoup("Flash", "un coup", Color.White, Modifier.weight(1f)) { Pads.flashCoup = true }
                 }
             } else {
             // Maintenus.
@@ -236,11 +237,11 @@ private fun PadMaintenu(nom: String, sous: String, couleur: Color, modifier: Mod
 }
 
 /**
- * Lampe tenue au doigt : pleine à l'appui, glisser vers le bas baisse sa luminosité (jusqu'au noir), lâcher la rend
- * à la figure. Chaque appui repart de 100 %. null = relâchée.
+ * Groupe de lampes tenu au doigt : plein à l'appui, glisser vers le bas baisse sa luminosité (jusqu'au noir), lâcher la rend
+ * à la figure. Chaque appui repart de 100 %. -1 = relâché.
  */
 @Composable
-private fun PadLampe(nom: String, couleur: Color, modifier: Modifier, onChange: (Float?) -> Unit) {
+private fun PadGroupe(nom: String, couleur: Color, modifier: Modifier, onChange: (Float) -> Unit) {
     val haptic = LocalHapticFeedback.current
     var niveau by remember { mutableStateOf<Float?>(null) }
     Box(
@@ -260,7 +261,7 @@ private fun PadLampe(nom: String, couleur: Color, modifier: Modifier, onChange: 
                         val v = (1f - (c.position.y - y0) / (size.height * 0.8f)).coerceIn(0f, 1f)
                         if (v != niveau) { niveau = v; onChange(v) }
                     }
-                    niveau = null; onChange(null)
+                    niveau = null; onChange(-1f)
                 }
             },
         contentAlignment = Alignment.Center,
@@ -269,6 +270,39 @@ private fun PadLampe(nom: String, couleur: Color, modifier: Modifier, onChange: 
         if (v != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(v).background(couleur.copy(alpha = 0.75f)))
         Etiquettes(nom, if (v != null) "${(v * 100).roundToInt()} %" else "glisser ↓ pour baisser", if (v != null && v > 0.5f && couleur.red + couleur.green + couleur.blue > 1.5f) Fond else Texte)
     }
+}
+
+/**
+ * Tap tempo : taper en rythme sur au moins deux temps fixe le BPM (moyenne des derniers intervalles) et recale le
+ * temps sur chaque tap. Auto rend le tempo à l'analyse.
+ */
+@Composable
+private fun PadTap(accent: Color, bpm: Float, modifier: Modifier) {
+    val haptic = LocalHapticFeedback.current
+    val taps = remember { ArrayDeque<Long>() }
+    var appuye by remember { mutableStateOf(false) }
+    Box(
+        modifier.fillMaxHeight()
+            .verre(20.dp, teinte = if (appuye) accent.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.06f))
+            .pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    appuye = true
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val t = System.nanoTime()
+                    if (taps.isNotEmpty() && t - taps.last() > 2_000_000_000L) taps.clear()
+                    taps.addLast(t)
+                    while (taps.size > 8) taps.removeFirst()
+                    if (taps.size >= 2) {
+                        val bpmTap = 60f * (taps.size - 1) / ((taps.last() - taps.first()) / 1e9f)
+                        if (bpmTap in 60f..200f) Pads.tapBpm = bpmTap
+                    }
+                    Pads.tapSync = true
+                    tryAwaitRelease()
+                    appuye = false
+                })
+            },
+        contentAlignment = Alignment.Center,
+    ) { Etiquettes("Tap", if (Pads.tapBpm > 0f) "${bpm.roundToInt()} bpm fixé" else "taper le tempo", if (appuye) Fond else Texte) }
 }
 
 /** Pad qui reste allumé jusqu'au prochain appui. */
