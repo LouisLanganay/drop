@@ -40,6 +40,29 @@ enum class Figure(val label: String) {
 }
 
 /**
+ * Pads du light jockey (onglet Pads) : ce que Louis joue à la main pendant le show, lu à chaque image.
+ * Les pads maintenus (noir, stroboscope, flash) passent avant tout ; les verrous (figure, couleur) restent
+ * jusqu'à Auto ; drop et montée se déclenchent une fois.
+ */
+object Pads {
+    @Volatile var noir = false
+    @Volatile var strobe = false
+    @Volatile var flash = false
+    @Volatile var figure: Figure? = null
+    @Volatile var couleur: FloatArray? = null
+    @Volatile var drop = false
+    @Volatile var montee = false
+
+    fun auto() {
+        figure = null
+        couleur = null
+        noir = false
+        strobe = false
+        flash = false
+    }
+}
+
+/**
  * Le light show, 50 images par seconde. Son intensité suit la musique sur une échelle continue
  * (« excitation », tirée de l'énergie et de la densité des attaques) :
  * - mesures et phrases viennent de l'analyse, calées sur la musique (premier temps, début de phrase) ;
@@ -112,6 +135,9 @@ class Effects(channels: List<Channel>) {
     private var riseBlackUntil = -100.0
     private var rises = 0
     private var lastMode = ""
+    /** Montée lancée au pad : 8 mesures calées sur le tempo, noir puis montée quel que soit le style. */
+    private var padRiseAt = -100.0
+    private var padRiseUntil = -100.0
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
     @Volatile private var testRequested = false
@@ -188,12 +214,26 @@ class Effects(channels: List<Channel>) {
             }
         }
 
-        // Trois couleurs par look, en fondu depuis celles affichées au moment du changement.
+        if (Pads.drop) {
+            Pads.drop = false
+            drop(now, mood, test = true)
+        }
+        if (Pads.montee) {
+            Pads.montee = false
+            padRiseAt = now
+            padRiseUntil = now + period * 32
+            dropAt = -100.0
+        }
+        Pads.figure?.let { figure = it }
+
+        // Trois couleurs par look, en fondu depuis celles affichées au moment du changement ; une couleur verrouillée
+        // au pad les remplace (la deuxième et la troisième en sont des nuances).
         val theme = themeFor(mood)
         val k = smooth(((now - lookAt) / fade).toFloat().coerceIn(0f, 1f))
-        val p = mix(fromP, theme[look % theme.size], k)
-        val a = mix(fromA, theme[(look + 1) % theme.size], k)
-        val t = mix(fromT, theme[(look + 2) % theme.size], k)
+        val verrou = Pads.couleur
+        val p = verrou ?: mix(fromP, theme[look % theme.size], k)
+        val a = verrou?.let { mix(it, WHITE, 0.3f) } ?: mix(fromA, theme[(look + 1) % theme.size], k)
+        val t = verrou?.let { scale(it, 0.6f) } ?: mix(fromT, theme[(look + 2) % theme.size], k)
         curP = p
         curA = a
         curT = t
@@ -209,11 +249,14 @@ class Effects(channels: List<Channel>) {
         val sinceDrop = now - dropAt
         val strobeOn = floor(now * 10.0).toLong() % 2L == 0L
 
+        val padRise = now < padRiseUntil
         mode = when {
             now < strobeUntil -> "Stroboscope"
+            padRise -> "Montée"
             s.silent -> "Silence"
             sinceDrop in 0.0..(period * 8) -> "DROP"
             s.buildup > 0.3f -> "Montée"
+            Pads.figure != null -> if (x > 0.6f) "Énergie" else "Groove"
             calm -> "Calme"
             x > 0.6f -> "Énergie"
             else -> "Groove"
@@ -229,12 +272,19 @@ class Effects(channels: List<Channel>) {
         }
         lastMode = mode
         // Noir puis montée pour la house et la techno (choix de Louis), poursuite qui accélère pour le reste.
-        val noirMontee = mood == Mood.HOUSE || mood == Mood.TECHNO
+        val noirMontee = padRise || mood == Mood.HOUSE || mood == Mood.TECHNO
+        // Tension de la montée : celle de la musique, ou le temps écoulé pour une montée lancée au pad.
+        val tension = if (padRise) ((now - padRiseAt) / (padRiseUntil - padRiseAt)).toFloat().coerceIn(0f, 1f) else s.buildup
         figureLabel = when (mode) {
             "Groove", "Énergie" -> figure.label
             "DROP" -> "Explosion"
             "Montée" -> if (noirMontee) "Noir et montée" else "Accélération"
             else -> ""
+        }
+        when {
+            Pads.noir -> figureLabel = "Pad : noir"
+            Pads.flash -> figureLabel = "Pad : flash"
+            Pads.strobe -> figureLabel = "Pad : stroboscope"
         }
 
         val n = ring.size
@@ -244,7 +294,7 @@ class Effects(channels: List<Channel>) {
             var instant = false
             var up = 0.035f
             var down = 0.2f
-            val target: FloatArray = when (mode) {
+            var target: FloatArray = when (mode) {
                 "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
                 "Silence" -> scale(p, 0.05f)
                 "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
@@ -258,7 +308,7 @@ class Effects(channels: List<Channel>) {
                     } else {
                         up = 0.02f
                         down = 0.05f
-                        val b = s.buildup.coerceIn(0f, 1f)
+                        val b = tension.coerceIn(0f, 1f)
                         val sub = if (b < 0.5f) 1 else if (b < 0.8f) 2 else 4
                         val ph = (phase * sub) % 1.0
                         val pulse = exp(-ph * 4.0).toFloat()
@@ -326,6 +376,12 @@ class Effects(channels: List<Channel>) {
                         }
                     }
                 }
+            }
+            // Pads maintenus : noir, flash, stroboscope, nets, par-dessus tout le reste.
+            when {
+                Pads.noir -> { instant = true; target = BLACK }
+                Pads.flash -> { instant = true; target = WHITE }
+                Pads.strobe -> { instant = true; target = if (strobeOn) WHITE else scale(WHITE, 0.04f) }
             }
             // Lissage par composante : montée rapide, descente plus douce ; le stroboscope reste net.
             val prev = shown[ch.id] ?: target

@@ -228,6 +228,7 @@ class MainActivity : ComponentActivity() {
         var bridgeErr by remember { mutableStateOf<String?>(null) }
         var analyse by remember { mutableStateOf(false) }
         var reglages by remember { mutableStateOf(false) }
+        var pads by remember { mutableStateOf(false) }
 
         val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { micOk = micAccorde() }
         LaunchedEffect(Unit) {
@@ -281,10 +282,12 @@ class MainActivity : ComponentActivity() {
             ) { setup = false }
         } else if (analyse) {
             AnalyseScreen(lamps) { analyse = false }
+        } else if (pads) {
+            PadsScreen { pads = false }
         } else if (reglages) {
             ReglagesScreen(prefs) { reglages = false }
         } else {
-            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr, onAnalyse = { analyse = true }, onReglages = { reglages = true }) {
+            ShowScreen(prefs, areas, zoneId, choisirZone, lamps, morceauOk, bridgeErr, onAnalyse = { analyse = true }, onReglages = { reglages = true }, onPads = { pads = true }) {
                 DropService.stop(ctx)
                 prefs.username = null
                 prefs.clientKey = null
@@ -384,7 +387,7 @@ class MainActivity : ComponentActivity() {
     private fun ShowScreen(
         prefs: Prefs, areas: List<EntArea>, zoneId: String?, onZone: (String) -> Unit,
         lamps: List<Lamp>, morceauOk: Boolean, bridgeErr: String?, onAnalyse: () -> Unit, onReglages: () -> Unit,
-        onUnpair: () -> Unit,
+        onPads: () -> Unit, onUnpair: () -> Unit,
     ) {
         val ctx = this@MainActivity
         val state by DropService.live.collectAsState()
@@ -397,11 +400,13 @@ class MainActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-                Logo()
+                Logo(compact = true)
                 Spacer(Modifier.weight(1f))
                 BoutonIcone(Curseurs, "Réglages", onReglages)
                 Spacer(Modifier.width(8.dp))
                 BoutonIcone(Courbe, "Analyse en direct", onAnalyse)
+                Spacer(Modifier.width(8.dp))
+                BoutonIcone(Grille, "Pads", onPads)
                 Spacer(Modifier.width(8.dp))
                 if (running) EnDirect(state.area.ifEmpty { area?.name.orEmpty() }, accent, state.beatInBar)
                 else BoutonZone(area) { sheet = true }
@@ -463,10 +468,10 @@ class MainActivity : ComponentActivity() {
 // ─── Morceaux d'écran ──────────────────────────────────────────────────────────
 
 @Composable
-private fun Logo() {
+private fun Logo(compact: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(Goutte, contentDescription = null, tint = Texte, modifier = Modifier.size(20.dp))
-        Text("Drop", style = corps(19, FontWeight.SemiBold).copy(letterSpacing = (-0.4).sp))
+        Icon(Goutte, contentDescription = if (compact) "Drop" else null, tint = Texte, modifier = Modifier.size(20.dp))
+        if (!compact) Text("Drop", style = corps(19, FontWeight.SemiBold).copy(letterSpacing = (-0.4).sp))
     }
 }
 
