@@ -324,7 +324,7 @@ private fun PadCoup(nom: String, sous: String, accent: Color, modifier: Modifier
     val haptic = LocalHapticFeedback.current
     var appuye by remember { mutableStateOf(false) }
     Box(
-        modifier.fillMaxHeight()
+        modifier.fillMaxSize()
             .verre(20.dp, teinte = if (appuye) accent.copy(alpha = 0.95f) else accent.copy(alpha = 0.22f))
             .pointerInput(Unit) {
                 detectTapGestures(onPress = {
