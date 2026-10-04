@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
         } else if (analyse) {
             AnalyseScreen(lamps) { analyse = false }
         } else if (pads) {
-            PadsScreen { pads = false }
+            PadsScreen(lamps) { pads = false }
         } else if (reglages) {
             ReglagesScreen(prefs) { reglages = false }
         } else {

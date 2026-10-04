@@ -53,6 +53,19 @@ object Pads {
     @Volatile var drop = false
     @Volatile var montee = false
 
+    // Mode avancé : l'analyse ne donne plus que le tempo, tout le reste se joue aux pads.
+    @Volatile var avance = false
+    /** Niveau du fond (fader), de 0 (noir) à 1. */
+    @Volatile var niveau = 0.25f
+    /** Vitesse des figures : 1, 2 ou 4 pas par temps. */
+    @Volatile var vitesse = 1
+    /** Lampes tenues au doigt (canaux). */
+    val lampes: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    @Volatile var gauche = false
+    @Volatile var droite = false
+    /** Dernier coup du pad Hit (horloge du show), traité à l'image suivante. */
+    @Volatile var hit = false
+
     fun auto() {
         figure = null
         couleur = null
@@ -138,6 +151,7 @@ class Effects(channels: List<Channel>) {
     /** Montée lancée au pad : 8 mesures calées sur le tempo, noir puis montée quel que soit le style. */
     private var padRiseAt = -100.0
     private var padRiseUntil = -100.0
+    private var hitAt = -100.0
     private var strobeUntil = -1.0
     private var lastStrobe = -100.0
     @Volatile private var testRequested = false
@@ -205,12 +219,12 @@ class Effects(channels: List<Channel>) {
                 }
                 AudioEvent.Kick -> if (now - kickAt > 0.22) kickAt = now
                 AudioEvent.Impact -> {}
-                AudioEvent.DropStart -> if (dropFx) {
+                AudioEvent.DropStart -> if (dropFx && !Pads.avance) {
                     dropAt = now
                     pickFigure(mood, 1f)
                 }
                 AudioEvent.DropCancel -> if (now >= strobeUntil) dropAt = -100.0
-                AudioEvent.Drop -> if (dropFx) drop(now, mood, test = false)
+                AudioEvent.Drop -> if (dropFx && !Pads.avance) drop(now, mood, test = false)
             }
         }
 
@@ -225,6 +239,13 @@ class Effects(channels: List<Channel>) {
             dropAt = -100.0
         }
         Pads.figure?.let { figure = it }
+        if (Pads.hit) {
+            Pads.hit = false
+            hitAt = now
+        }
+        val avance = Pads.avance
+        val rapide = if (avance) Pads.vitesse >= 2 else fast
+        val pas = if (avance) Pads.vitesse else if (fast) 2 else 1
 
         // Trois couleurs par look, en fondu depuis celles affichées au moment du changement ; une couleur verrouillée
         // au pad les remplace (la deuxième et la troisième en sont des nuances).
@@ -253,6 +274,8 @@ class Effects(channels: List<Channel>) {
         mode = when {
             now < strobeUntil -> "Stroboscope"
             padRise -> "Montée"
+            sinceDrop in 0.0..(period * 8) && avance -> "DROP"
+            avance -> if (Pads.figure != null) "Groove" else "Manuel"
             s.silent -> "Silence"
             sinceDrop in 0.0..(period * 8) -> "DROP"
             s.buildup > 0.3f -> "Montée"
@@ -278,6 +301,7 @@ class Effects(channels: List<Channel>) {
         figureLabel = when (mode) {
             "Groove", "Énergie" -> figure.label
             "DROP" -> "Explosion"
+            "Manuel" -> "Manuel"
             "Montée" -> if (noirMontee) "Noir et montée" else "Accélération"
             else -> ""
         }
@@ -297,6 +321,7 @@ class Effects(channels: List<Channel>) {
             var target: FloatArray = when (mode) {
                 "Stroboscope" -> { instant = true; if (strobeOn) WHITE else scale(WHITE, 0.04f) }
                 "Silence" -> scale(p, 0.05f)
+                "Manuel" -> { down = 0.15f; scale(p, Pads.niveau) }
                 "DROP" -> scale(if (i % 2 == 0) p else a, 0.55f + 0.45f * env)
                 "Montée" -> if (noirMontee) {
                     // Noir, puis une seule couleur qui remonte avec la tension de la musique, en pulsant sur les
@@ -336,7 +361,7 @@ class Effects(channels: List<Channel>) {
                         // Une lampe à la fois autour du canapé, d'un cran par temps (à la croche quand ça envoie),
                         // suivie d'une traîne : deux lampes allumées au plus, les autres éteintes.
                         down = 0.06f
-                        chase(i, n, if (fast) 2 else 1, phase, scale(p, hi), scale(a, 0.35f * hi))
+                        chase(i, n, pas, phase, scale(p, hi), scale(a, 0.35f * hi))
                     }
                     Figure.PINGPONG -> {
                         // Gauche sur un temps, droite sur le suivant : le côté qui ne joue pas est noir, celui qui
@@ -349,7 +374,7 @@ class Effects(channels: List<Channel>) {
                     Figure.SWEEP -> {
                         // Un faisceau qui traverse la pièce de gauche à droite puis revient : une mesure par passage,
                         // une demi-mesure quand ça envoie.
-                        val perPass = if (fast) 2 else 4
+                        val perPass = if (avance) max(1, 4 / Pads.vitesse) else if (fast) 2 else 4
                         val pos = ((beats % perPass) + min(phase, 1.0)) / perPass
                         val head = if ((beats / perPass) % 2L == 0L) pos else 1 - pos
                         // Faisceau dans le noir : la lampe la plus proche du faisceau reste au-dessus de 60 %.
@@ -361,7 +386,7 @@ class Effects(channels: List<Channel>) {
                     Figure.CROSS -> {
                         // Une lampe sur deux dans chaque couleur, échangées à chaque mesure (tous les deux temps
                         // quand ça envoie) ; pulsation marquée au premier temps, légère sur les autres.
-                        val swap = (beats / (if (fast) 2L else 4L)) % 2L == 1L
+                        val swap = (beats / (if (rapide) 2L else 4L)) % 2L == 1L
                         scale(if ((i % 2 == 0) != swap) p else a, lo + ((if (downbeat) hi else 0.6f) - lo) * env)
                     }
                     Figure.HITS -> {
@@ -376,6 +401,13 @@ class Effects(channels: List<Channel>) {
                         }
                     }
                 }
+            }
+            // Mode avancé : le coup du pad Hit retombe en un temps, les lampes et les côtés tenus au doigt sont pleins.
+            if (avance) {
+                val coup = exp(-(now - hitAt) / max(0.12, period * 0.4)).toFloat()
+                if (coup > 0.02f) { target = FloatArray(3) { c -> max(target[c], a[c] * coup) }; if (now - hitAt < 0.03) instant = true }
+                val tenue = ch.id in Pads.lampes || (Pads.gauche && sd <= 0) || (Pads.droite && sd >= 0)
+                if (tenue) { instant = true; target = p }
             }
             // Pads maintenus : noir, flash, stroboscope, nets, par-dessus tout le reste.
             when {
