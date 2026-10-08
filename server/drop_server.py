@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import traceback
@@ -26,7 +27,9 @@ import analysis as A
 DATA = Path(os.environ.get("DROP_DATA", str(Path.home() / "drop-data")))
 STATIC = Path(__file__).parent / "static"
 PORT = int(os.environ.get("DROP_PORT", "5720"))
-ALLOWED = {x.strip() for x in os.environ.get("DROP_ALLOWED_LOGINS", "louislanganay@gmail.com").split(",") if x.strip()}
+ALLOWED = {x.strip() for x in os.environ.get("DROP_ALLOWED_LOGINS", "").split(",") if x.strip()}
+if not ALLOWED:
+    print("DROP_ALLOWED_LOGINS est vide : toutes les requêtes seront refusées.", file=sys.stderr)
 MATCH_S = 1.5  # deux drops à moins de 1,5 s l'un de l'autre sont le même drop (la position Spotify flotte d'environ 1 s)
 
 DATA.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,9 @@ import os
 import urllib.request
 
 URL = os.environ.get("DROP_URL", "http://127.0.0.1:5720")
-HEAD = {"Tailscale-User-Login": "louislanganay@gmail.com"}
+# Compte Tailscale au nom duquel importer : DROP_LOGIN, sinon le premier de DROP_ALLOWED_LOGINS.
+LOGIN = os.environ.get("DROP_LOGIN") or os.environ.get("DROP_ALLOWED_LOGINS", "").split(",")[0].strip()
+HEAD = {"Tailscale-User-Login": LOGIN}
 
 
 def post(path, data, ctype="application/gzip"):
@@ -29,6 +31,8 @@ def main():
     ap.add_argument("--pos", action="append", default=[], help="t=position Spotify en secondes")
     ap.add_argument("--started", help="heure de Go, ISO local")
     a = ap.parse_args()
+    if not LOGIN:
+        ap.error("variable DROP_LOGIN (ou DROP_ALLOWED_LOGINS) absente : compte Tailscale autorisé sur le serveur")
     text = open(a.csv, encoding="utf-8").read()
     sid = "rec-" + hashlib.sha1(os.path.basename(a.csv).encode()).hexdigest()[:12]
     durs = dict(x.split("=", 1) for x in a.dur)
