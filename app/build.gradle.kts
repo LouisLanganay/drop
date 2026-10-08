@@ -6,6 +6,16 @@ plugins {
 
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
+// Adresse du serveur de Drop, hors du code : propriété Gradle `-Pdrop.server=...`, sinon `drop.server` dans
+// local.properties, sinon la variable d'environnement DROP_SERVER_URL (posée par la CI). Vide par défaut.
+val localProps = java.util.Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+val dropServer = (findProperty("drop.server") as String?)
+    ?: localProps.getProperty("drop.server")
+    ?: System.getenv("DROP_SERVER_URL")
+    ?: ""
+
 android {
     namespace = "dev.langanay.drop"
     compileSdk = 35
@@ -16,6 +26,7 @@ android {
         targetSdk = 35
         versionCode = runNumber
         versionName = "0.1.$runNumber"
+        buildConfigField("String", "DROP_SERVER_URL", "\"${dropServer.replace("\"", "")}\"")
     }
 
     // Même clé à chaque compilation : sans elle, Android refuse d'installer
@@ -41,7 +52,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     packaging {
         resources {
             excludes += setOf("META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/*.kotlin_module")

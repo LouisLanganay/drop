@@ -132,7 +132,7 @@ internal fun ReglagesScreen(prefs: Prefs, onBack: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Bouton("Synchroniser") { TrackMemory.sync(ctx) }
-                Bouton("Ouvrir le dashboard") { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SERVER))) }
+                if (SERVER.isNotBlank()) Bouton("Ouvrir le dashboard") { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SERVER))) }
             }
         }
 

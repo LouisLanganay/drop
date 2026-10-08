@@ -12,10 +12,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPOutputStream
 
-/** Serveur de Drop sur agentia, joignable seulement par Tailscale (qui identifie le téléphone). */
-const val SERVER = "https://agentia.tail16ac81.ts.net:4445"
+/**
+ * Serveur de Drop, joignable seulement par Tailscale (qui identifie le téléphone). L'adresse vient de la compilation
+ * (propriété Gradle `drop.server`, `local.properties` ou variable `DROP_SERVER_URL`) ; vide, rien n'est envoyé.
+ */
+val SERVER: String = BuildConfig.DROP_SERVER_URL.trimEnd('/')
 
 private fun http(method: String, path: String, body: ByteArray? = null, type: String = "application/json"): Pair<Int, String> {
+    check(SERVER.isNotBlank()) { "adresse du serveur non configurée à la compilation" }
     val c = URL(SERVER + path).openConnection() as HttpURLConnection
     c.requestMethod = method
     c.connectTimeout = 6000

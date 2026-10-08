@@ -21,6 +21,8 @@ jobs:
           KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: mkdir -p keystore && echo "$KS" | base64 -d > keystore/debug.keystore
       - name: Compilation
+        env:
+          DROP_SERVER_URL: ${{ secrets.DROP_SERVER_URL }}
         run: gradle :app:assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         with:
