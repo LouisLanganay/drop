@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -8,7 +10,7 @@ val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
 // Adresse du serveur de Drop, hors du code : propriété Gradle `-Pdrop.server=...`, sinon `drop.server` dans
 // local.properties, sinon la variable d'environnement DROP_SERVER_URL (posée par la CI). Vide par défaut.
-val localProps = java.util.Properties().apply {
+val localProps = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
 val dropServer = (findProperty("drop.server") as String?)
